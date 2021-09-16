@@ -2,6 +2,8 @@
 
 name: CI
 
+
+
 # Controls when the workflow will run
 on:
   # Triggers the workflow on push or pull request events but only for the master branch
@@ -25,7 +27,7 @@ jobs:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - uses: actions/checkout@v2
       
-      - name: Run golangci-lint
+      
         uses: golangci/golangci-lint-action@v2.5.2
         
 
