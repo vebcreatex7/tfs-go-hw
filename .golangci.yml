@@ -1,0 +1,30 @@
+- name: Run golangci-lint
+  uses: golangci/golangci-lint-action@v2.5.2
+
+linters:
+  disable-all: true
+  enable:
+    # - deadcode
+    - errcheck
+    - staticcheck
+    - structcheck
+    - typecheck
+    - unused
+    - varcheck
+    # - misspell
+    - nolintlint
+    - goimports
+    - nakedret
+    - unconvert
+    - whitespace
+    - gosimple
+    - govet
+    - ineffassign
+    - gocritic
+    - revive
+linters-settings:
+  nolintlint:
+    allow-unused: false
+    allow-leading-space: false
+    require-specific: true
+
