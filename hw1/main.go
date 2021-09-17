@@ -1,67 +1,48 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+)
 
-type TFunc func(*[]int)
+type TFunc func(*map[string]int)
 
 func size(s int) TFunc {
-	return func(slice *[]int) {
-		*slice = append(*slice, s)
+	return func(args *map[string]int) {
+		(*args)["size"] = s
 	}
 }
-
 func char(c int) TFunc {
-	return func(slice *[]int) {
-		*slice = append(*slice, c)
+	return func(args *map[string]int) {
+		(*args)["char"] = c
 	}
 }
-
 func color(c int) TFunc {
-	return func(slice *[]int) {
-		*slice = append(*slice, c)
+	return func(args *map[string]int) {
+		(*args)["color"] = c
 	}
 }
 
 func sandglass(params ...TFunc) {
-	args := new([]int)
-
-	for _, arg := range params {
-		arg(args)
+	// default values
+	args := map[string]int{
+		"size":  10,
+		"char":  'X',
+		"color": 0,
 	}
 
-	n := len(*args)
+	for _, arg := range params {
+		arg(&args)
+	}
 
 	var size int
 	var char rune
 	var color int
 
-	char = 'X' // default value
-	color = 0  // default value
-
-	switch {
-	case n == 0:
-		fmt.Println("Error. Not enough arguments")
-		return
-	case n == 1:
-		size = (*args)[0]
-	case n == 2:
-		size = (*args)[0]
-		char = rune((*args)[1])
-	case n == 3:
-		size = (*args)[0]
-		char = rune((*args)[1])
-		color = (*args)[2]
-	default:
-		fmt.Println("Error. To many arguments")
-		return
-	}
+	size = args["size"]
+	char = rune(args["char"])
+	color = args["color"]
 
 	// checking the conditions
-	if size <= 0 {
-		fmt.Print("Error. Wrong size\n")
-		return
-	}
-
 	if !(0 <= char && char <= 127) {
 		fmt.Print("Error. Wrong symbol. Expected ASCII.\n")
 		return
@@ -131,5 +112,5 @@ func sandglass(params ...TFunc) {
 }
 
 func main() {
-	sandglass(size(5), char('c'), color(32))
+	sandglass(color(36), size(15), char('#'))
 }
