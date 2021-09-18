@@ -4,21 +4,21 @@ import (
 	"fmt"
 )
 
-type TFunc func(*map[string]int)
+type TFunc func(map[string]int)
 
 func size(s int) TFunc {
-	return func(args *map[string]int) {
-		(*args)["size"] = s
+	return func(args map[string]int) {
+		args["size"] = s
 	}
 }
 func char(c int) TFunc {
-	return func(args *map[string]int) {
-		(*args)["char"] = c
+	return func(args map[string]int) {
+		args["char"] = c
 	}
 }
 func color(c int) TFunc {
-	return func(args *map[string]int) {
-		(*args)["color"] = c
+	return func(args map[string]int) {
+		args["color"] = c
 	}
 }
 
@@ -31,7 +31,7 @@ func sandglass(params ...TFunc) {
 	}
 
 	for _, arg := range params {
-		arg(&args)
+		arg(args)
 	}
 
 	var size int
