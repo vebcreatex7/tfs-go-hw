@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"sort"
+	"time"
 )
 
 func asEnv() (string, bool) {
@@ -21,7 +23,6 @@ func asFlag() (string, bool) {
 }
 
 func main() {
-
 	var data []byte
 
 	// Selecting a file
@@ -61,19 +62,57 @@ func main() {
 	file.Close()
 
 	// Reading from a JSON to a slice of company
-	var Companies []Company
-	if err := json.Unmarshal(data, &Companies); err != nil {
+	var sCompanies []Company
+	if err := json.Unmarshal(data, &sCompanies); err != nil {
 		fmt.Println("Error in unmarshaling")
 		return
 	}
 
-	for i, val := range Companies {
+	// Processing data
+	mCompannies := make(map[string][]Company)
+	for _, val := range sCompanies {
 		SetValid(&val)
-		Companies[i] = val
+		if !val.IsSkipped {
+			mCompannies[val.Company.(string)] = append(mCompannies[val.Company.(string)], val)
+		}
 	}
-	// Split into valid and invalid
 
-	newData, _ := json.MarshalIndent(Companies, "", "\t")
-	fmt.Println(string(newData))
+	// Sorting by date
+	for s := range mCompannies {
+		sort.Slice(mCompannies[s], func(i, j int) bool {
+			t1, _ := time.Parse(time.RFC3339, mCompannies[s][i].WorkingCreatedAt)
+			t2, _ := time.Parse(time.RFC3339, mCompannies[s][j].WorkingCreatedAt)
+			return t1.Before(t2)
+		})
+	}
 
+	// Fill in information about companies
+	sResults := make([]Result, 0, len(mCompannies))
+	for s := range mCompannies {
+		r := Result{Company: s}
+		Fill(&r, mCompannies[s])
+		sResults = append(sResults, r)
+	}
+
+	// Sorting by name of company
+	sort.Slice(sResults, func(i, j int) bool {
+		return sResults[i].Company < sResults[j].Company
+	})
+
+	newData, err := json.MarshalIndent(sResults, "", "\t")
+	if err != nil {
+		fmt.Println("Error in marshaling")
+		return
+	}
+
+	out, err := os.Create("out.json")
+	if err != nil {
+		fmt.Println("Can't open out.json")
+		return
+	}
+
+	if _, err = out.Write(newData); err != nil {
+		fmt.Println("Can't write to out.json")
+		return
+	}
 }
