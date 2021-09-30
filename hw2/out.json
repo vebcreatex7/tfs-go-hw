@@ -4,9 +4,9 @@
 		"valid_operations_count": 14,
 		"balance": 1446,
 		"invalid_operations": [
-			827,
 			"0116209c-f03c-4d14-9725-ae020e905e1e",
 			836,
+			827,
 			845
 		]
 	},
