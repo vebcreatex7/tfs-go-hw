@@ -64,7 +64,7 @@ func main() {
 	file.Close()
 
 	// Reading from a JSON to a slice of company
-	mCompannies := make(map[string][]WorkingCompany)
+	mBills := make(map[string][]WorkingBill)
 	dec := json.NewDecoder(strings.NewReader(string(data)))
 
 	// Reading opening bracket
@@ -76,17 +76,16 @@ func main() {
 
 	// while array contains values
 	for dec.More() {
-		var c ParsingCompany
+		var c Bill
 		err = dec.Decode(&c)
 		if err != nil {
 			fmt.Println("err")
 			return
 		}
-		company, flag := CheckValid(c)
-		if flag {
-			mCompannies[company.WCompany] = append(mCompannies[company.WCompany], company)
-		} else {
-			continue
+		fmt.Println(c)
+		company, ok := Check(c)
+		if ok {
+			mBills[company.WName] = append(mBills[company.WName], company)
 		}
 	}
 
@@ -98,25 +97,25 @@ func main() {
 	}
 
 	// Sorting by date
-	for s := range mCompannies {
-		sort.Slice(mCompannies[s], func(i, j int) bool {
-			t1, _ := time.Parse(time.RFC3339, mCompannies[s][i].WCreatedAt)
-			t2, _ := time.Parse(time.RFC3339, mCompannies[s][j].WCreatedAt)
+	for s := range mBills {
+		sort.Slice(mBills[s], func(i, j int) bool {
+			t1, _ := time.Parse(time.RFC3339, mBills[s][i].WCreatedAt)
+			t2, _ := time.Parse(time.RFC3339, mBills[s][j].WCreatedAt)
 			return t1.Before(t2)
 		})
 	}
 
 	// Fill in information about companies
-	sResults := make([]Result, 0, len(mCompannies))
-	for s := range mCompannies {
-		r := Result{Company: s}
-		Fill(&r, mCompannies[s])
+	sResults := make([]Result, 0, len(mBills))
+	for s := range mBills {
+		r := Result{Name: s}
+		Fill(&r, mBills[s])
 		sResults = append(sResults, r)
 	}
 
 	// Sorting by name of company
 	sort.Slice(sResults, func(i, j int) bool {
-		return sResults[i].Company < sResults[j].Company
+		return sResults[i].Name < sResults[j].Name
 	})
 
 	// Unmarshaling
