@@ -8,8 +8,6 @@ import (
 	"os"
 	"sort"
 	"time"
-
-	"strings"
 )
 
 func asEnv() (string, bool) {
@@ -65,35 +63,19 @@ func main() {
 
 	// Reading from a JSON to a slice of company
 	mBills := make(map[string][]WorkingBill)
-	dec := json.NewDecoder(strings.NewReader(string(data)))
 
-	// Reading opening bracket
-	_, err = dec.Token()
-	if err != nil {
+	var sBills []Bill
+
+	if err = json.Unmarshal(data, &sBills); err != nil {
 		fmt.Println("err")
 		return
 	}
 
-	// while array contains values
-	for dec.More() {
-		var c Bill
-		err = dec.Decode(&c)
-		if err != nil {
-			fmt.Println("err")
-			return
-		}
-		fmt.Println(c)
-		company, ok := Check(c)
+	for _, bill := range sBills {
+		company, ok := Check(bill)
 		if ok {
 			mBills[company.WName] = append(mBills[company.WName], company)
 		}
-	}
-
-	// Reading closing bracket
-	_, err = dec.Token()
-	if err != nil {
-		fmt.Println("err")
-		return
 	}
 
 	// Sorting by date
