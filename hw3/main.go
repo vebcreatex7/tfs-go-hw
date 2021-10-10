@@ -33,7 +33,6 @@ func updateCandle(c *domain.Candle, p domain.Price) {
 }
 
 func buildCandle(c []domain.Candle, per domain.CandlePeriod) *domain.Candle {
-
 	max := c[0].High
 	min := c[0].Low
 	for _, val := range c {
@@ -53,7 +52,6 @@ func buildCandle(c []domain.Candle, per domain.CandlePeriod) *domain.Candle {
 		Close:  c[len(c)-1].Close,
 		TS:     domain.PeriodTS(per, c[0].TS),
 	}
-
 }
 
 func toRecord(c *domain.Candle) []string {
@@ -66,13 +64,11 @@ func toRecord(c *domain.Candle) []string {
 	record = append(record, fmt.Sprintf("%f", c.Close))
 
 	return record
-
 }
 
 var tickers = []string{"AAPL", "SBER", "NVDA", "TSLA"}
 
-func oneMin(pg *generator.PricesGenerator, wg *sync.WaitGroup, ctx context.Context, cancel context.CancelFunc, sync chan struct{}) <-chan domain.Candle {
-
+func oneMin(ctx context.Context, pg *generator.PricesGenerator, wg *sync.WaitGroup, cancel context.CancelFunc, sync chan struct{}) <-chan domain.Candle {
 	// По каналу идут сгенерированные цены.
 	prices := pg.Prices(ctx)
 
@@ -91,7 +87,6 @@ func oneMin(pg *generator.PricesGenerator, wg *sync.WaitGroup, ctx context.Conte
 
 	nullTime := time.Time{}
 	go func() {
-
 		f, _ := os.Create("candles_1m.csv")
 		defer f.Close()
 
@@ -105,12 +100,15 @@ func oneMin(pg *generator.PricesGenerator, wg *sync.WaitGroup, ctx context.Conte
 			select {
 			case <-tech:
 				cancel()
+
 				// Отправялем все имеющиеся значения
-				for s, _ := range mCandles {
+				for s, val := range mCandles {
 					out <- *mCandles[s]
 
 					// Запись в файл //
-					w.Write(toRecord(mCandles[s]))
+					if err := w.Write(toRecord(val)); err != nil {
+						return
+					}
 				}
 
 				// Ждем завершения формирования 2-минутных свеч.
@@ -120,30 +118,32 @@ func oneMin(pg *generator.PricesGenerator, wg *sync.WaitGroup, ctx context.Conte
 				return
 			case price := <-prices:
 				// Ввод только начался
-				if mCandles[price.Ticker].TS == nullTime {
-					initCandle(mCandles[price.Ticker], price, domain.CandlePeriod1m)
-				} else {
 
+				switch mCandles[price.Ticker].TS {
+				case nullTime:
+					initCandle(mCandles[price.Ticker], price, domain.CandlePeriod1m)
+				default:
 					// Настал новый период
 					if mCandles[price.Ticker].TS != price.TS {
 						out <- *mCandles[price.Ticker]
 
 						// Запись в файл //
-						w.Write(toRecord(mCandles[price.Ticker]))
+						if err := w.Write(toRecord(mCandles[price.Ticker])); err != nil {
+							return
+						}
 
 						initCandle(mCandles[price.Ticker], price, domain.CandlePeriod1m)
 					} else {
 						updateCandle(mCandles[price.Ticker], price)
 					}
 				}
-
 			}
 		}
 	}()
 	return out
 }
 
-func twoMin(in <-chan domain.Candle, ctx context.Context, sync1, sync2 chan struct{}) <-chan domain.Candle {
+func twoMin(ctx context.Context, in <-chan domain.Candle, cancel context.CancelFunc, sync1, sync2 chan struct{}) <-chan domain.Candle {
 	out := make(chan domain.Candle)
 
 	// Хранилище для 1-минутых свечей.
@@ -166,17 +166,20 @@ func twoMin(in <-chan domain.Candle, ctx context.Context, sync1, sync2 chan stru
 		for {
 			select {
 			case <-ctx.Done():
+				cancel()
 				// Считаем все свечи из потока 1-минутных
-				for s, _ := range mOneMinCandles {
+				for s, val := range mOneMinCandles {
 					oneMinCandle := <-in
-					mOneMinCandles[s] = append(mOneMinCandles[s], oneMinCandle)
+					mOneMinCandles[s] = append(val, oneMinCandle)
 				}
 				// Формируем 2-х минутные.
-				for s, _ := range mTwoMinCandle {
+				for s, val := range mTwoMinCandle {
 					mTwoMinCandle[s] = buildCandle(mOneMinCandles[s], domain.CandlePeriod2m)
 					out <- *mTwoMinCandle[s]
 					// Запись в файл
-					w.Write(toRecord(mTwoMinCandle[s]))
+					if err := w.Write(toRecord(val)); err != nil {
+						return
+					}
 				}
 
 				// Ждем завершения формирования 10-минутных свеч.
@@ -199,7 +202,9 @@ func twoMin(in <-chan domain.Candle, ctx context.Context, sync1, sync2 chan stru
 					out <- *mTwoMinCandle[candle.Ticker]
 
 					// Запись в файл
-					w.Write(toRecord(mTwoMinCandle[candle.Ticker]))
+					if err := w.Write(toRecord(mTwoMinCandle[candle.Ticker])); err != nil {
+						return
+					}
 					mOneMinCandles[candle.Ticker] = nil
 				}
 			}
@@ -208,8 +213,7 @@ func twoMin(in <-chan domain.Candle, ctx context.Context, sync1, sync2 chan stru
 	return out
 }
 
-func tenMin(in <-chan domain.Candle, ctx context.Context, sync chan struct{}) {
-
+func tenMin(ctx context.Context, in <-chan domain.Candle, sync chan struct{}) {
 	// Для формирования 10-минутной свечи нужно 5 2-минутных.
 	mTwoMinCandles := make(map[string][]domain.Candle)
 
@@ -220,7 +224,6 @@ func tenMin(in <-chan domain.Candle, ctx context.Context, sync chan struct{}) {
 	}
 
 	go func() {
-
 		f, _ := os.Create("candles_10m.csv")
 		defer f.Close()
 
@@ -230,18 +233,20 @@ func tenMin(in <-chan domain.Candle, ctx context.Context, sync chan struct{}) {
 			select {
 			case <-ctx.Done():
 				// Считаем все свечи из потока 2-минутных
-				for s, _ := range mTwoMinCandles {
+				for s, val := range mTwoMinCandles {
 					TwoMinCandle := <-in
-					mTwoMinCandles[s] = append(mTwoMinCandles[s], TwoMinCandle)
+					mTwoMinCandles[s] = append(val, TwoMinCandle)
 				}
 
 				// Формируем 10-минутные свечи.
 
-				for s, _ := range mTenMinCandle {
+				for s, val := range mTenMinCandle {
 					mTenMinCandle[s] = buildCandle(mTwoMinCandles[s], domain.CandlePeriod10m)
 
-					//Запись в файл
-					w.Write(toRecord(mTenMinCandle[s]))
+					// Запись в файл
+					if err := w.Write(toRecord(val)); err != nil {
+						return
+					}
 				}
 
 				// Синхронизируемся с функцией формирования 2-минутных свечей.
@@ -256,8 +261,10 @@ func tenMin(in <-chan domain.Candle, ctx context.Context, sync chan struct{}) {
 				if len(mTwoMinCandles[candle.Ticker]) == 5 {
 					mTenMinCandle[candle.Ticker] = buildCandle(mTwoMinCandles[candle.Ticker], domain.CandlePeriod10m)
 
-					//Запись в файл
-					w.Write(toRecord(mTenMinCandle[candle.Ticker]))
+					// Запись в файл
+					if err := w.Write(toRecord(mTenMinCandle[candle.Ticker])); err != nil {
+						return
+					}
 					mTwoMinCandles[candle.Ticker] = nil
 				}
 			}
@@ -266,27 +273,22 @@ func tenMin(in <-chan domain.Candle, ctx context.Context, sync chan struct{}) {
 }
 
 func main() {
-
-	//ctx, cancelFunc := context.WithCancel(context.Background())
-
 	pg := generator.NewPricesGenerator(generator.Config{
 		Factor:  15,
 		Delay:   time.Millisecond * 500,
 		Tickers: tickers,
 	})
 
-	//prices := pg.Prices(ctx)
-
 	ctx, cancelFunc := context.WithCancel(context.Background())
-	ctx1, _ := context.WithCancel(ctx)
+	ctx1, cancelFunc1 := context.WithCancel(ctx)
 
 	sync1 := make(chan struct{})
 	sync2 := make(chan struct{})
 
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
-	out1 := oneMin(pg, wg, ctx, cancelFunc, sync1)
-	out2 := twoMin(out1, ctx, sync1, sync2)
-	tenMin(out2, ctx1, sync2)
+	out1 := oneMin(ctx, pg, wg, cancelFunc, sync1)
+	out2 := twoMin(ctx, out1, cancelFunc1, sync1, sync2)
+	tenMin(ctx1, out2, sync2)
 	wg.Wait()
 }
