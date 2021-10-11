@@ -54,7 +54,7 @@ func buildCandle(c []domain.Candle, per domain.CandlePeriod) *domain.Candle {
 	}
 }
 
-func toRecord(c *domain.Candle) []string {
+func toRecord(c domain.Candle) []string {
 	record := make([]string, 0)
 	record = append(record, c.Ticker)
 	record = append(record, c.TS.String())
@@ -70,6 +70,17 @@ func initMapOfCandle(mCandles map[string]*domain.Candle, per domain.CandlePeriod
 	for _, ticker := range tickers {
 		mCandles[ticker] = &domain.Candle{Period: per}
 	}
+}
+
+// Цепочка конвеера, записывает свечи в файл и отправляет дальше.
+func writeCandle(in <-chan domain.Candle, w *csv.Writer) <-chan domain.Candle {
+	out := make(chan domain.Candle)
+	x := <-in
+	if err := w.Write(toRecord(x)); err != nil {
+		panic(err)
+	}
+	out <- x
+	return out
 }
 
 var tickers = []string{"AAPL", "SBER", "NVDA", "TSLA"}
@@ -111,7 +122,7 @@ func oneMin(ctx context.Context, pg *generator.PricesGenerator, wg *sync.WaitGro
 					out <- *mCandles[s]
 
 					// Запись в файл //
-					if err := w.Write(toRecord(val)); err != nil {
+					if err := w.Write(toRecord(*val)); err != nil {
 						return
 					}
 				}
@@ -134,7 +145,7 @@ func oneMin(ctx context.Context, pg *generator.PricesGenerator, wg *sync.WaitGro
 					out <- *mCandles[price.Ticker]
 
 					// Запись в файл //
-					if err := w.Write(toRecord(mCandles[price.Ticker])); err != nil {
+					if err := w.Write(toRecord(*mCandles[price.Ticker])); err != nil {
 						return
 					}
 
@@ -178,7 +189,7 @@ func twoMin(ctx context.Context, in <-chan domain.Candle, cancel context.CancelF
 					mTwoMinCandle[s] = buildCandle(mOneMinCandles[s], domain.CandlePeriod2m)
 					out <- *mTwoMinCandle[s]
 					// Запись в файл
-					if err := w.Write(toRecord(val)); err != nil {
+					if err := w.Write(toRecord(*val)); err != nil {
 						return
 					}
 				}
@@ -203,7 +214,7 @@ func twoMin(ctx context.Context, in <-chan domain.Candle, cancel context.CancelF
 					out <- *mTwoMinCandle[candle.Ticker]
 
 					// Запись в файл
-					if err := w.Write(toRecord(mTwoMinCandle[candle.Ticker])); err != nil {
+					if err := w.Write(toRecord(*mTwoMinCandle[candle.Ticker])); err != nil {
 						return
 					}
 					mOneMinCandles[candle.Ticker] = nil
@@ -243,7 +254,7 @@ func tenMin(ctx context.Context, in <-chan domain.Candle, sync chan struct{}) {
 					mTenMinCandle[s] = buildCandle(mTwoMinCandles[s], domain.CandlePeriod10m)
 
 					// Запись в файл
-					if err := w.Write(toRecord(val)); err != nil {
+					if err := w.Write(toRecord(*val)); err != nil {
 						return
 					}
 				}
@@ -261,7 +272,7 @@ func tenMin(ctx context.Context, in <-chan domain.Candle, sync chan struct{}) {
 					mTenMinCandle[candle.Ticker] = buildCandle(mTwoMinCandles[candle.Ticker], domain.CandlePeriod10m)
 
 					// Запись в файл
-					if err := w.Write(toRecord(mTenMinCandle[candle.Ticker])); err != nil {
+					if err := w.Write(toRecord(*mTenMinCandle[candle.Ticker])); err != nil {
 						return
 					}
 					mTwoMinCandles[candle.Ticker] = nil
@@ -272,13 +283,46 @@ func tenMin(ctx context.Context, in <-chan domain.Candle, sync chan struct{}) {
 }
 
 func main() {
+	ctx, cancelFunc := context.WithCancel(context.Background())
+
 	pg := generator.NewPricesGenerator(generator.Config{
 		Factor:  15,
 		Delay:   time.Millisecond * 500,
 		Tickers: tickers,
 	})
+	// Канал из которого поступают цены
+	pg.Prices(ctx)
 
-	ctx, cancelFunc := context.WithCancel(context.Background())
+	// Файл для записи 1-минутных свечей.
+	f1, _ := os.Create("candles_1m.csv")
+	defer f1.Close()
+	w1 := csv.NewWriter(f1)
+	defer w1.Flush()
+
+	// Файл для записи 2-минутных свечей.
+	f2, _ := os.Create("candles_2m.csv")
+	defer f2.Close()
+	w2 := csv.NewWriter(f2)
+	defer w2.Flush()
+
+	// Файл для записи 10-минутных свечей.
+	f10, _ := os.Create("candles_10m.csv")
+	defer f10.Close()
+	w10 := csv.NewWriter(f10)
+	defer w10.Flush()
+
+	// канал для обратоки сигнала SIGINT
+	tech := make(chan os.Signal, 1)
+	signal.Notify(tech, syscall.SIGINT)
+
+	// Запускаем конвеер
+
+	// Ждем ^C
+	<-tech
+
+	// Ждем завершения пайплайна
+	//<-outLust
+
 	ctx1, cancelFunc1 := context.WithCancel(ctx)
 
 	sync1 := make(chan struct{})
