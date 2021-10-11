@@ -66,6 +66,12 @@ func toRecord(c *domain.Candle) []string {
 	return record
 }
 
+func initMapOfCandle(mCandles map[string]*domain.Candle, per domain.CandlePeriod) {
+	for _, ticker := range tickers {
+		mCandles[ticker] = &domain.Candle{Period: per}
+	}
+}
+
 var tickers = []string{"AAPL", "SBER", "NVDA", "TSLA"}
 
 func oneMin(ctx context.Context, pg *generator.PricesGenerator, wg *sync.WaitGroup, cancel context.CancelFunc, sync chan struct{}) <-chan domain.Candle {
@@ -76,10 +82,9 @@ func oneMin(ctx context.Context, pg *generator.PricesGenerator, wg *sync.WaitGro
 	out := make(chan domain.Candle)
 
 	// мапа хранит свечи для каждой комапании.
+
 	mCandles := make(map[string]*domain.Candle)
-	for _, ticker := range tickers {
-		mCandles[ticker] = &domain.Candle{Period: domain.CandlePeriod1m}
-	}
+	initMapOfCandle(mCandles, domain.CandlePeriod1m)
 
 	// канал для обратоки сигнала SIGINT
 	tech := make(chan os.Signal)
@@ -122,20 +127,18 @@ func oneMin(ctx context.Context, pg *generator.PricesGenerator, wg *sync.WaitGro
 				switch mCandles[price.Ticker].TS {
 				case nullTime:
 					initCandle(mCandles[price.Ticker], price, domain.CandlePeriod1m)
+				case price.TS:
+					updateCandle(mCandles[price.Ticker], price)
 				default:
 					// Настал новый период
-					if mCandles[price.Ticker].TS != price.TS {
-						out <- *mCandles[price.Ticker]
+					out <- *mCandles[price.Ticker]
 
-						// Запись в файл //
-						if err := w.Write(toRecord(mCandles[price.Ticker])); err != nil {
-							return
-						}
-
-						initCandle(mCandles[price.Ticker], price, domain.CandlePeriod1m)
-					} else {
-						updateCandle(mCandles[price.Ticker], price)
+					// Запись в файл //
+					if err := w.Write(toRecord(mCandles[price.Ticker])); err != nil {
+						return
 					}
+
+					initCandle(mCandles[price.Ticker], price, domain.CandlePeriod1m)
 				}
 			}
 		}
@@ -152,9 +155,7 @@ func twoMin(ctx context.Context, in <-chan domain.Candle, cancel context.CancelF
 
 	// Мапа хранит 2-х минутные свечи для каждой комапнии.
 	mTwoMinCandle := make(map[string]*domain.Candle)
-	for _, ticker := range tickers {
-		mTwoMinCandle[ticker] = &domain.Candle{Period: domain.CandlePeriod2m}
-	}
+	initMapOfCandle(mTwoMinCandle, domain.CandlePeriod2m)
 
 	go func() {
 		f, _ := os.Create("candles_2m.csv")
@@ -219,9 +220,7 @@ func tenMin(ctx context.Context, in <-chan domain.Candle, sync chan struct{}) {
 
 	// Мапа хранит 10-минутные свечи для каждой компании.
 	mTenMinCandle := make(map[string]*domain.Candle)
-	for _, ticker := range tickers {
-		mTenMinCandle[ticker] = &domain.Candle{Period: domain.CandlePeriod10m}
-	}
+	initMapOfCandle(mTenMinCandle, domain.CandlePeriod10m)
 
 	go func() {
 		f, _ := os.Create("candles_10m.csv")
