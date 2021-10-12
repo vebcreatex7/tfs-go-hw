@@ -189,7 +189,6 @@ func main() {
 	tech := make(chan os.Signal, 1)
 	signal.Notify(tech, syscall.SIGINT)
 
-	outLust := make(<-chan domain.Candle)
 	g, ctx1 := errgroup.WithContext(ctx)
 
 	// Запускаем конвеер
@@ -199,7 +198,7 @@ func main() {
 		twoMinCandle := intermediateCandle(out1, domain.CandlePeriod2m)
 		out2 := writeCandle(twoMinCandle, domain.CandlePeriod2m)
 		tenMinCandle := intermediateCandle(out2, domain.CandlePeriod10m)
-		outLust = writeCandle(tenMinCandle, domain.CandlePeriod10m)
+		outLust := writeCandle(tenMinCandle, domain.CandlePeriod10m)
 
 		<-ctx1.Done()
 		go func() {
