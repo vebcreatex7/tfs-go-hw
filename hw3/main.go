@@ -8,9 +8,10 @@ import (
 	"hw-async/generator"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 )
 
 func initCandle(c *domain.Candle, p domain.Price, cp domain.CandlePeriod) {
@@ -66,30 +67,25 @@ func toRecord(c domain.Candle) []string {
 	record = append(record, fmt.Sprintf("%f", c.High))
 	record = append(record, fmt.Sprintf("%f", c.Low))
 	record = append(record, fmt.Sprintf("%f", c.Close))
-
 	return record
 }
 
 // Цепочка конвеера, записывает свечи в файл и отправляет дальше.
-func writeCandle(in <-chan domain.Candle, w *csv.Writer, mu sync.Locker) <-chan domain.Candle {
+func writeCandle(in <-chan domain.Candle, per domain.CandlePeriod) <-chan domain.Candle {
 	out := make(chan domain.Candle)
 	go func() {
-		for {
-			candle, ok := <-in
+		f, _ := os.Create(fmt.Sprintf("candles_%s.csv", per))
+		w := csv.NewWriter(f)
+		defer f.Close()
+		defer w.Flush()
+		defer close(out)
 
-			// Канал закрылся
-			if !ok {
-				break
-			}
-
-			mu.Lock()
+		for candle := range in {
 			if err := w.Write(toRecord(candle)); err != nil {
 				panic(err)
 			}
-			mu.Unlock()
 			out <- candle
 		}
-		close(out)
 	}()
 
 	return out
@@ -109,6 +105,7 @@ func oneMin(prices <-chan domain.Price) <-chan domain.Candle {
 	}
 
 	go func() {
+		defer close(out)
 		for price := range prices {
 			switch mCandles[price.Ticker].TS {
 			// Ввод только начался
@@ -130,8 +127,6 @@ func oneMin(prices <-chan domain.Price) <-chan domain.Candle {
 		for _, val := range mCandles {
 			out <- *val
 		}
-		// Закрываем канал
-		close(out)
 	}()
 	return out
 }
@@ -139,15 +134,6 @@ func oneMin(prices <-chan domain.Price) <-chan domain.Candle {
 // Внутренняя функция конвеера, формирует 2-минутные и 10-минутные свечи.
 func intermediateCandle(in <-chan domain.Candle, per domain.CandlePeriod) <-chan domain.Candle {
 	out := make(chan domain.Candle)
-
-	// Количество свечей для формирования новой
-	var n int
-	switch per {
-	case domain.CandlePeriod2m:
-		n = 2
-	case domain.CandlePeriod10m:
-		n = 5
-	}
 
 	// Хранилище для предыдущих свечей
 	mPrevCandles := make(map[string][]domain.Candle)
@@ -159,10 +145,16 @@ func intermediateCandle(in <-chan domain.Candle, per domain.CandlePeriod) <-chan
 	}
 
 	go func() {
+		defer close(out)
 		for candle := range in {
-			mPrevCandles[candle.Ticker] = append(mPrevCandles[candle.Ticker], candle)
-			// Если собрали n предыдущих свечей, формируем новую
-			if len(mPrevCandles[candle.Ticker]) == n {
+			n := len(mPrevCandles[candle.Ticker])
+
+			// Если у нас 0 накопленных свечей или период новой свечи совпадает с периодом накопленных
+			if n == 0 || (domain.PeriodTS(per, mPrevCandles[candle.Ticker][n-1].TS) == domain.PeriodTS(per, candle.TS)) {
+				mPrevCandles[candle.Ticker] = append(mPrevCandles[candle.Ticker], candle)
+
+				// Формируем новую свечку
+			} else {
 				mCurrCandle[candle.Ticker], _ = buildCandle(mPrevCandles[candle.Ticker], per)
 				out <- *mCurrCandle[candle.Ticker]
 				mPrevCandles[candle.Ticker] = nil
@@ -170,14 +162,13 @@ func intermediateCandle(in <-chan domain.Candle, per domain.CandlePeriod) <-chan
 		}
 		// Канал закрылся
 		// Из имеющихся свечей нужно сформировать новые.
-		for _, val := range mCurrCandle {
-			cdl, ok := buildCandle(mPrevCandles[val.Ticker], per)
+		for s := range mCurrCandle {
+			cdl, ok := buildCandle(mPrevCandles[s], per)
 			// Только не пустые свечи.
 			if ok {
 				out <- *cdl
 			}
 		}
-		close(out)
 	}()
 
 	return out
@@ -194,54 +185,31 @@ func main() {
 	// Канал из которого поступают цены
 	price := pg.Prices(ctx)
 
-	// Файл для записи 1-минутных свечей.
-	f1, _ := os.Create("candles_1m.csv")
-	defer f1.Close()
-	w1 := csv.NewWriter(f1)
-	defer w1.Flush()
-	mu1 := &sync.Mutex{}
-
-	// Файл для записи 2-минутных свечей.
-	f2, _ := os.Create("candles_2m.csv")
-	defer f2.Close()
-	w2 := csv.NewWriter(f2)
-	defer w2.Flush()
-	mu2 := &sync.Mutex{}
-
-	// Файл для записи 10-минутных свечей.
-	f10, _ := os.Create("candles_10m.csv")
-	defer f10.Close()
-	w10 := csv.NewWriter(f10)
-	defer w10.Flush()
-	mu10 := &sync.Mutex{}
-
 	// канал для обратоки сигнала SIGINT
 	tech := make(chan os.Signal, 1)
 	signal.Notify(tech, syscall.SIGINT)
 
+	outLust := make(<-chan domain.Candle)
+	g, ctx1 := errgroup.WithContext(ctx)
+
 	// Запускаем конвеер
-	oneMinCandle := oneMin(price)
-	out1 := writeCandle(oneMinCandle, w1, mu1)
-	twoMinCandle := intermediateCandle(out1, domain.CandlePeriod2m)
-	out2 := writeCandle(twoMinCandle, w2, mu2)
-	tenMinCandle := intermediateCandle(out2, domain.CandlePeriod10m)
-	outLust := writeCandle(tenMinCandle, w10, mu10)
-	for {
-		select {
-		// Ждем завершения пайплайна
-		case <-tech:
-			cancelFunc()
+	g.Go(func() error {
+		oneMinCandle := oneMin(price)
+		out1 := writeCandle(oneMinCandle, domain.CandlePeriod1m)
+		twoMinCandle := intermediateCandle(out1, domain.CandlePeriod2m)
+		out2 := writeCandle(twoMinCandle, domain.CandlePeriod2m)
+		tenMinCandle := intermediateCandle(out2, domain.CandlePeriod10m)
+		outLust = writeCandle(tenMinCandle, domain.CandlePeriod10m)
 
-			// Нужно осушить пайплайн
-			for {
-				_, ok := <-outLust
-				if !ok {
-					return
-				}
+		<-ctx1.Done()
+		go func() {
+			for range outLust {
 			}
+		}()
+		return nil
+	})
 
-		case <-outLust:
-			// Continue
-		}
-	}
+	<-tech
+	cancelFunc()
+	_ = g.Wait()
 }
