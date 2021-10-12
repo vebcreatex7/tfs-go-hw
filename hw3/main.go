@@ -71,7 +71,7 @@ func toRecord(c domain.Candle) []string {
 }
 
 // Цепочка конвеера, записывает свечи в файл и отправляет дальше.
-func writeCandle(in <-chan domain.Candle, w *csv.Writer, mu *sync.Mutex) <-chan domain.Candle {
+func writeCandle(in <-chan domain.Candle, w *csv.Writer, mu sync.Locker) <-chan domain.Candle {
 	out := make(chan domain.Candle)
 	go func() {
 		for {
@@ -83,7 +83,6 @@ func writeCandle(in <-chan domain.Candle, w *csv.Writer, mu *sync.Mutex) <-chan 
 			}
 
 			mu.Lock()
-			fmt.Println(candle)
 			if err := w.Write(toRecord(candle)); err != nil {
 				panic(err)
 			}
@@ -98,8 +97,8 @@ func writeCandle(in <-chan domain.Candle, w *csv.Writer, mu *sync.Mutex) <-chan 
 
 var tickers = []string{"AAPL", "SBER", "NVDA", "TSLA"}
 
+// Начало конвеера, формирует 1-минутные свечи.
 func oneMin(prices <-chan domain.Price) <-chan domain.Candle {
-
 	// Канал, по которому далее в конвеер передаются 1-минутные свечи.
 	out := make(chan domain.Candle)
 
@@ -109,7 +108,6 @@ func oneMin(prices <-chan domain.Price) <-chan domain.Candle {
 		mCandles[ticker] = &domain.Candle{Period: domain.CandlePeriod1m}
 	}
 
-	//nullTime := time.Time{}
 	go func() {
 		for price := range prices {
 			switch mCandles[price.Ticker].TS {
@@ -134,53 +132,12 @@ func oneMin(prices <-chan domain.Price) <-chan domain.Candle {
 		}
 		// Закрываем канал
 		close(out)
-
 	}()
 	return out
 }
 
-func twoMin(in <-chan domain.Candle) <-chan domain.Candle {
-	out := make(chan domain.Candle)
-
-	// Хранилище для 1-минутых свечей.
-	// Для формирования 2-минутной нужно 2 1-минутные
-	mOneMinCandles := make(map[string][]domain.Candle)
-
-	// Мапа хранит 2-х минутные свечи для каждой комапнии.
-	mTwoMinCandle := make(map[string]*domain.Candle)
-	for _, ticker := range tickers {
-		mTwoMinCandle[ticker] = &domain.Candle{Period: domain.CandlePeriod2m}
-	}
-	go func() {
-		for candle := range in {
-			// Добавляем в хранилище
-			mOneMinCandles[candle.Ticker] = append(mOneMinCandles[candle.Ticker], candle)
-			// Если собрали 2 1-минутные свечки, формируем 2-минутную,
-			// отправляем по пайплайну далее.
-			if len(mOneMinCandles[candle.Ticker]) == 2 {
-				mTwoMinCandle[candle.Ticker], _ = buildCandle(mOneMinCandles[candle.Ticker], domain.CandlePeriod2m)
-				out <- *mTwoMinCandle[candle.Ticker]
-				mOneMinCandles[candle.Ticker] = nil
-			}
-		}
-		// Канал закрылся
-		// Из имеющихся 1-минутных нужно сформировать 2-минутные и отправить по пайплайну.
-		for s, _ := range mTwoMinCandle {
-			cdl, ok := buildCandle(mOneMinCandles[s], domain.CandlePeriod2m)
-			// Только не пустые свечи.
-			if ok {
-				out <- *cdl
-			}
-
-		}
-		close(out)
-
-	}()
-	return out
-}
-
+// Внутренняя функция конвеера, формирует 2-минутные и 10-минутные свечи.
 func intermediateCandle(in <-chan domain.Candle, per domain.CandlePeriod) <-chan domain.Candle {
-
 	out := make(chan domain.Candle)
 
 	// Количество свечей для формирования новой
@@ -221,50 +178,8 @@ func intermediateCandle(in <-chan domain.Candle, per domain.CandlePeriod) <-chan
 			}
 		}
 		close(out)
-
 	}()
 
-	return out
-}
-
-func tenMin(in <-chan domain.Candle) <-chan domain.Candle {
-	out := make(chan domain.Candle)
-
-	// Для формирования 10-минутной свечи нужно 5 2-минутных.
-	mTwoMinCandles := make(map[string][]domain.Candle)
-
-	// Мапа хранит 10-минутные свечи для каждой компании.
-	mTenMinCandle := make(map[string]*domain.Candle)
-	for _, ticker := range tickers {
-		mTenMinCandle[ticker] = &domain.Candle{Period: domain.CandlePeriod10m}
-	}
-
-	go func() {
-		// Канал открыт
-		for candle := range in {
-			// Добавляем в хранилище.
-			mTwoMinCandles[candle.Ticker] = append(mTwoMinCandles[candle.Ticker], candle)
-
-			// Если собрали 5 2-минутные свечки, формируем 10-минутную.
-			// отправляем по пайплайну далее.
-			if len(mTwoMinCandles[candle.Ticker]) == 5 {
-				mTenMinCandle[candle.Ticker], _ = buildCandle(mTwoMinCandles[candle.Ticker], domain.CandlePeriod10m)
-				out <- *mTenMinCandle[candle.Ticker]
-				mTwoMinCandles[candle.Ticker] = nil
-			}
-		}
-		// Канал закрылся
-		// Формируем 10-минутные свечи.
-		for s, _ := range mTenMinCandle {
-			cdl, ok := buildCandle(mTwoMinCandles[s], domain.CandlePeriod10m)
-			if ok {
-				out <- *cdl
-			}
-
-		}
-		close(out)
-
-	}()
 	return out
 }
 
@@ -305,9 +220,6 @@ func main() {
 	signal.Notify(tech, syscall.SIGINT)
 
 	// Запускаем конвеер
-	//sync1 := make(chan struct{})
-	//sync2 := make(chan struct{})
-
 	oneMinCandle := oneMin(price)
 	out1 := writeCandle(oneMinCandle, w1, mu1)
 	twoMinCandle := intermediateCandle(out1, domain.CandlePeriod2m)
@@ -321,27 +233,15 @@ func main() {
 			cancelFunc()
 
 			// Нужно осушить пайплайн
-			for _ = range outLust {
+			for {
+				_, ok := <-outLust
+				if !ok {
+					return
+				}
 			}
-			return
+
 		case <-outLust:
-			/// Continue
+			// Continue
 		}
 	}
-
-	/*
-		twoMinCandle := twoMin(out1)
-		out2 := writeCandle(twoMinCandle, w2, mu2)
-		tenMinCandle := tenMin(out2)
-		outLast := writeCandle(tenMinCandle, w10, mu10)
-	*/
-	// Ждем ^C
-	/*
-		<-tech
-		fmt.Println("^C")
-		cancelFunc()
-
-		// Ждем завершения пайплайна
-		<-sync2
-	*/
 }
