@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"hw-async/domain"
 	"hw-async/generator"
@@ -71,9 +72,9 @@ func toRecord(c domain.Candle) []string {
 }
 
 // Цепочка конвеера, записывает свечи в файл и отправляет дальше.
-func writeCandle(in <-chan domain.Candle, per domain.CandlePeriod) <-chan domain.Candle {
+func writeCandle(in <-chan domain.Candle, per domain.CandlePeriod, eg *errgroup.Group) <-chan domain.Candle {
 	out := make(chan domain.Candle)
-	go func() {
+	eg.Go(func() error {
 		f, _ := os.Create(fmt.Sprintf("candles_%s.csv", per))
 		w := csv.NewWriter(f)
 		defer f.Close()
@@ -86,7 +87,8 @@ func writeCandle(in <-chan domain.Candle, per domain.CandlePeriod) <-chan domain
 			}
 			out <- candle
 		}
-	}()
+		return errors.New("channel is closed")
+	})
 
 	return out
 }
@@ -189,26 +191,23 @@ func main() {
 	tech := make(chan os.Signal, 1)
 	signal.Notify(tech, syscall.SIGINT)
 
-	g, ctx1 := errgroup.WithContext(ctx)
+	var eg errgroup.Group
 
 	// Запускаем конвеер
-	g.Go(func() error {
-		oneMinCandle := oneMin(price)
-		out1 := writeCandle(oneMinCandle, domain.CandlePeriod1m)
-		twoMinCandle := intermediateCandle(out1, domain.CandlePeriod2m)
-		out2 := writeCandle(twoMinCandle, domain.CandlePeriod2m)
-		tenMinCandle := intermediateCandle(out2, domain.CandlePeriod10m)
-		outLust := writeCandle(tenMinCandle, domain.CandlePeriod10m)
 
-		<-ctx1.Done()
-		go func() {
-			for range outLust {
-			}
-		}()
-		return nil
-	})
+	oneMinCandle := oneMin(price)
+	out1 := writeCandle(oneMinCandle, domain.CandlePeriod1m, &eg)
+	twoMinCandle := intermediateCandle(out1, domain.CandlePeriod2m)
+	out2 := writeCandle(twoMinCandle, domain.CandlePeriod2m, &eg)
+	tenMinCandle := intermediateCandle(out2, domain.CandlePeriod10m)
+	outLust := writeCandle(tenMinCandle, domain.CandlePeriod10m, &eg)
+	go func() {
+		for range outLust {
+		}
+	}()
 
 	<-tech
 	cancelFunc()
-	_ = g.Wait()
+	_ = eg.Wait()
+
 }
