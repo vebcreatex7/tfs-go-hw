@@ -71,6 +71,8 @@ func toRecord(c domain.Candle) []string {
 	return record
 }
 
+var errClosed = errors.New("channel is closed")
+
 // Цепочка конвеера, записывает свечи в файл и отправляет дальше.
 func writeCandle(in <-chan domain.Candle, per domain.CandlePeriod, eg *errgroup.Group) <-chan domain.Candle {
 	out := make(chan domain.Candle)
@@ -87,7 +89,7 @@ func writeCandle(in <-chan domain.Candle, per domain.CandlePeriod, eg *errgroup.
 			}
 			out <- candle
 		}
-		return errors.New("channel is closed")
+		return fmt.Errorf("%w", errClosed)
 	})
 
 	return out
@@ -209,5 +211,4 @@ func main() {
 	<-tech
 	cancelFunc()
 	_ = eg.Wait()
-
 }
