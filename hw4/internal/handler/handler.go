@@ -2,23 +2,28 @@ package handler
 
 import "github.com/go-chi/chi/v5"
 
-type Handler struct {
-}
+type Handler struct{}
 
 func (h *Handler) InitRoutes() *chi.Mux {
-	r := chi.NewRouter()
+	Users := &Users{}
+	Chat := &Chat{}
 
-	r.Route("/users", func(r chi.Router) {
-		r.Post("/sign-up", SignUp)                     // Регистрация
-		r.Post("/{id}/messages", SendPrivateMessage)   // Отправить личное сообщение пользователю id
-		r.Get("/me/{id}/messages", VievPrivateMessage) // Получить сообщение от пользователя id
+	root := chi.NewRouter()
+	root.Post("/sign-up", Users.SignUp)
 
-	})
+	u := chi.NewRouter()
+	u.Use(Users.Auth)
+	u.Post("/{id}/message", Users.SendMessage)
+	u.Get("/me/message", Users.ReadMessage)
+	root.Mount("/user", u)
 
-	r.Route("/chat", func(r chi.Router) {
-		r.Post("/send", SendMessage) // Отправить сообщение в общий чат
-		r.Get("/view", VievMessage)  // Получить сообщение из общего чата
-	})
+	m := chi.NewRouter()
+	m.Use(Users.Auth)
+	m.Post("/send", Chat.SendMessage)
+	m.Get("/read", Chat.ReadMessage)
+	root.Mount("/message", m)
 
-	return r
+	root.Get("/list", Users.GetUsers)
+
+	return root
 }

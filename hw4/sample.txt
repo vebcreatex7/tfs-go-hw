@@ -1,0 +1,2 @@
+curl -v -X POST -H "Content-Type: application/json" --data '{"name":"masha", "username":"konsky", "password":"pas"}' localhost:8000/sign-up
+curl -v -X POST -H "Content-Type: application/json" --data '{"name":"kirill", "username":"kira", "password":"123"}' localhost:8000/sign-up
