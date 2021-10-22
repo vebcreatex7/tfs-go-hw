@@ -1,12 +1,16 @@
 package handler
 
-import "github.com/go-chi/chi/v5"
+import (
+	"sync"
+
+	"github.com/go-chi/chi/v5"
+)
 
 type Handler struct{}
 
 func (h *Handler) InitRoutes() *chi.Mux {
 	Users := &Users{}
-	Chat := &Chat{}
+	Chat := &Chat{mu: &sync.Mutex{}}
 
 	root := chi.NewRouter()
 	root.Post("/sign-up", Users.SignUp)

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/tfs-go-hw/hw4/internal/domain"
@@ -53,6 +54,7 @@ func (l *Users) SignUp(w http.ResponseWriter, r *http.Request) {
 	u.Name = parsing.Name
 	u.Username = parsing.Username
 	u.Password = parsing.Password
+	u.PrivateChat.mu = &sync.Mutex{}
 
 	if _, ok := l.FindUser(u); ok {
 		w.WriteHeader(http.StatusBadRequest)

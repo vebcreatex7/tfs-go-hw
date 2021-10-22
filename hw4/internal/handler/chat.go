@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"sync"
 
 	"github.com/tfs-go-hw/hw4/internal/domain"
 )
@@ -14,7 +15,8 @@ type Message struct {
 }
 
 type Chat struct {
-	c []Message
+	mu *sync.Mutex
+	c  []Message
 }
 
 func (chat *Chat) SendMessage(w http.ResponseWriter, r *http.Request) {
@@ -36,8 +38,9 @@ func (chat *Chat) SendMessage(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-
+	chat.mu.Lock()
 	chat.c = append(chat.c, Message{Username: u.Username, Message: parsing.Message})
+	chat.mu.Unlock()
 }
 
 func (chat *Chat) ReadMessage(w http.ResponseWriter, r *http.Request) {
