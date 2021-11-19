@@ -5,31 +5,36 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/tfs-go-hw/course_project/internal/repository"
+	"github.com/tfs-go-hw/course_project/internal/services/kraken"
 )
 
 type Bot struct {
-	conn       *websocket.Conn
-	repo       repository.Repository
-	done       context.Context
-	publicKey  string
-	privateKey string
-	symbol     string
+	repo   repository.Repository
+	kraken kraken.KrakenService
+}
+
+func NewBotService(c *websocket.Conn, r repository.Repository, public string, private string) BotService {
+	return &Bot{
+		repo:   r,
+		kraken: kraken.NewKraken(c, public, private),
+	}
 }
 
 type BotService interface {
 	SetSymbol(string)
-}
-
-func NewBotService(c *websocket.Conn, r repository.Repository, d context.Context, public string, private string) BotService {
-	return &Bot{
-		conn:       c,
-		repo:       r,
-		done:       d,
-		publicKey:  public,
-		privateKey: private,
-	}
+	Run(context.Context) chan struct{}
+	GetSymbol() string
 }
 
 func (b *Bot) SetSymbol(s string) {
-	b.symbol = s
+	b.kraken.SetSymbol(s)
+}
+
+func (b *Bot) GetSymbol() string {
+	return b.kraken.GetSymbol()
+}
+
+func (b *Bot) Run(done context.Context) chan struct{} {
+	finish := make(chan struct{})
+	return finish
 }
