@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"sync"
 
@@ -26,7 +27,7 @@ func NewBot(c *websocket.Conn, r repository.Repository, d context.Context, publi
 		start:   make(chan struct{}),
 		stop:    make(chan struct{}),
 		done:    d,
-		service: services.NewBotService(c, r, public, private),
+		service: services.NewBotService(r, public, private),
 	}
 }
 
@@ -38,7 +39,7 @@ func (b *Bot) Run(wg *sync.WaitGroup) {
 		serviceStoped := make(chan struct{})
 
 		// context to stop the bot
-		doneService, cancelFunc := context.WithCancel(b.done)
+		serviceDone, cancelFunc := context.WithCancel(b.done)
 
 		defer func() {
 			cancelFunc()
@@ -55,7 +56,7 @@ func (b *Bot) Run(wg *sync.WaitGroup) {
 
 			// Start the bot
 			case <-b.start:
-				go func() { serviceStoped = b.service.Run(doneService) }()
+				go b.service.Run(serviceDone, serviceStoped)
 			}
 
 			select {
@@ -70,7 +71,7 @@ func (b *Bot) Run(wg *sync.WaitGroup) {
 
 			// Internal bot error
 			case <-serviceStoped:
-
+				log.Println("Internal bot error")
 			}
 
 		}
@@ -79,8 +80,8 @@ func (b *Bot) Run(wg *sync.WaitGroup) {
 }
 
 func (b *Bot) Start(w http.ResponseWriter, r *http.Request) {
-	if b.service.GetSymbol() == "" {
-		w.Write([]byte("Symbol is not set"))
+	if b.service.GetSymbol() == "" || b.service.GetPeriod() == "" {
+		w.Write([]byte("not enough parameters"))
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -89,12 +90,10 @@ func (b *Bot) Start(w http.ResponseWriter, r *http.Request) {
 }
 
 func (b *Bot) Stop(w http.ResponseWriter, r *http.Request) {
-
 	b.stop <- struct{}{}
 }
 
-func (b *Bot) Symbol(w http.ResponseWriter, r *http.Request) {
-
+func (b *Bot) SetSymbol(w http.ResponseWriter, r *http.Request) {
 	d, err := io.ReadAll(r.Body)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -118,12 +117,37 @@ func (b *Bot) Symbol(w http.ResponseWriter, r *http.Request) {
 
 }
 
+func (b *Bot) SetPeriod(w http.ResponseWriter, r *http.Request) {
+	d, err := io.ReadAll(r.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	defer r.Body.Close()
+
+	buf := &domain.Period{}
+
+	err = json.Unmarshal(d, buf)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	if !buf.IsValid() {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	b.service.SetPeriod(buf.Period)
+}
+
 func (b *Bot) Routes() chi.Router {
 	r := chi.NewRouter()
 	r.Route("/bot", func(r chi.Router) {
 		r.Post("/start", b.Start)
 		r.Post("/stop", b.Stop)
-		r.Post("/set_symbol", b.Symbol)
+		r.Post("/set_symbol", b.SetSymbol)
+		r.Post("/set_period", b.SetPeriod)
 	})
 	return r
 }
