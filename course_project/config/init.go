@@ -5,7 +5,7 @@ import (
 )
 
 func Init() error {
-	viper.AddConfigPath("./config")
+	viper.AddConfigPath("/home/courage/tfs-go/tfs-go-hw/course_project/config")
 	viper.SetConfigName("config")
 	return viper.ReadInConfig()
 }

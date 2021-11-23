@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -18,19 +19,20 @@ import (
 const (
 
 	// Time allowed to subscibe to the candle stream
-	subscibeWait = 120 * time.Second
+	subscibeWait = 30 * time.Second
 
 	// Time allowed to read the next pong message from the peer
 	pongWait = 60 * time.Second
 
 	// Send pings to peer with this period.
 	pingPeriod = (pongWait * 9) / 10
-
-	// Time allowed to connect to the market
-	connWait = 30 * time.Second
 )
 
 const urlWs = "wss://demo-futures.kraken.com/ws/v1?chart"
+
+var (
+	ErrBadConnect = errors.New("kraken: bad subscribe")
+)
 
 type Kraken struct {
 	conn       *websocket.Conn
@@ -52,8 +54,10 @@ type KrakenService interface {
 	GetSymbol() string
 	SetPeriod(domain.CandlePeriod)
 	GetPeriod() domain.CandlePeriod
-	Subscribe() error
-	CloseConnection() error
+	WSConnect() error
+	WSDisconnect() error
+	WSSubscribe() error
+	WSUnsubscribe() error
 	ReadHandler(*sync.WaitGroup, context.Context, chan domain.Candle)
 	WriteHandler(*sync.WaitGroup, context.Context)
 }
@@ -74,33 +78,67 @@ func (k *Kraken) GetPeriod() domain.CandlePeriod {
 	return k.period
 }
 
-func SetConnection(url string) (*websocket.Conn, error) {
-	wait := time.NewTicker(connWait)
-	var conn *websocket.Conn
+func (k *Kraken) WSConnect() error {
+	wait := time.NewTicker(subscibeWait)
 	var err error
 	for {
 		select {
 		case <-wait.C:
-			return nil, fmt.Errorf("%s", "can't establish a connection")
+			k.conn = nil
+			return ErrBadConnect
 		default:
-			conn, _, err = websocket.DefaultDialer.Dial(url, nil)
+			k.conn, _, err = websocket.DefaultDialer.Dial(urlWs, nil)
 			if err == nil {
-				return conn, nil
+				return nil
 			}
 		}
 	}
 }
 
-func (k *Kraken) CloseConnection() error {
-	return k.conn.Close()
-}
-
-func (k *Kraken) Subscribe() error {
-	var err error
-	k.conn, err = SetConnection(urlWs)
+func (k *Kraken) WSDisconnect() error {
+	err := k.conn.Close()
+	k.conn = nil
 	if err != nil {
 		return err
 	}
+	return nil
+}
+
+func (k *Kraken) WSSubscribe() error {
+
+	version := &domain.Event{}
+	err := k.conn.ReadJSON(version)
+	if err != nil {
+		return err
+	}
+	fmt.Println(version)
+
+	event := domain.NewEvent("subscribe", string(k.period), k.symbol)
+	err = k.conn.WriteJSON(event)
+	if err != nil {
+		return err
+	}
+
+	err = k.conn.ReadJSON(&event)
+	if err != nil {
+		return err
+	}
+	fmt.Println(event)
+	return nil
+}
+
+func (k *Kraken) WSUnsubscribe() error {
+	event := domain.NewEvent("unsubscribe", string(k.period), k.symbol)
+	err := k.conn.WriteJSON(event)
+	if err != nil {
+		return err
+	}
+
+	err = k.conn.ReadJSON(&event)
+	if err != nil {
+		return err
+	}
+	fmt.Println(event)
 	return nil
 }
 
@@ -110,11 +148,14 @@ func (k *Kraken) WriteHandler(wg *sync.WaitGroup, done context.Context) {
 	defer func() {
 		ping.Stop()
 		wg.Done()
-		k.conn.Close()
 	}()
 
 	event := domain.NewEvent("subscribe", string(k.period), k.symbol)
-	k.conn.WriteJSON(event)
+	err := k.conn.WriteJSON(event)
+	if err != nil {
+		log.Println(err)
+		return
+	}
 
 	for {
 		select {
@@ -126,7 +167,10 @@ func (k *Kraken) WriteHandler(wg *sync.WaitGroup, done context.Context) {
 		case <-done.Done():
 			stop := event
 			stop.Event = "unsubscribe"
-			k.conn.WriteJSON(stop)
+			err = k.conn.WriteJSON(stop)
+			if err != nil {
+				log.Println(err)
+			}
 			return
 		}
 	}
@@ -135,20 +179,40 @@ func (k *Kraken) WriteHandler(wg *sync.WaitGroup, done context.Context) {
 func (k *Kraken) ReadHandler(wg *sync.WaitGroup, done context.Context, c chan domain.Candle) {
 	defer func() {
 		wg.Done()
-		k.conn.Close()
 	}()
+
 	k.conn.SetReadDeadline(time.Now().Add(pongWait))
 	k.conn.SetPongHandler(func(string) error { k.conn.SetReadDeadline(time.Now().Add(pongWait)); return nil })
 
-	var version domain.Event
-	k.conn.ReadJSON(&version)
-	log.Println(version)
+	version := &domain.Event{}
+	err := k.conn.ReadJSON(version)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	//fmt.Println(version)
 
+	// Subscribe
+	var event domain.Event
+	err = k.conn.ReadJSON(&event)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	//fmt.Println(event)
+
+	// Candles
 	candle := &domain.Candle{}
 	tmp := domain.CandleSubscribe{}
-	k.conn.ReadJSON(&tmp)
-	candle.BuildCandle(tmp)
+	err = k.conn.ReadJSON(&tmp)
+	if err != nil {
+		log.Println(err)
+		return
+	}
 
+	candle.BuildCandle(tmp)
+	//fmt.Println("candle", candle)
+	c <- *candle
 	for {
 		select {
 		case <-done.Done():
@@ -156,8 +220,9 @@ func (k *Kraken) ReadHandler(wg *sync.WaitGroup, done context.Context, c chan do
 		default:
 			err := k.conn.ReadJSON(&tmp)
 			if err != nil {
-				break
+				return
 			}
+			fmt.Println("tmp", tmp)
 			if tmp.C.Time == candle.Time {
 				candle.Close = tmp.C.Close
 				if tmp.C.Low < candle.Low {

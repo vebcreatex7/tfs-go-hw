@@ -9,9 +9,7 @@ import (
 	"sync"
 
 	"github.com/go-chi/chi"
-	"github.com/gorilla/websocket"
 	"github.com/tfs-go-hw/course_project/internal/domain"
-	"github.com/tfs-go-hw/course_project/internal/repository"
 	"github.com/tfs-go-hw/course_project/internal/services"
 )
 
@@ -22,12 +20,12 @@ type Bot struct {
 	service services.BotService
 }
 
-func NewBot(c *websocket.Conn, r repository.Repository, d context.Context, public string, private string) *Bot {
+func NewBot(d context.Context, s services.BotService) *Bot {
 	return &Bot{
 		start:   make(chan struct{}),
 		stop:    make(chan struct{}),
 		done:    d,
-		service: services.NewBotService(r, public, private),
+		service: s,
 	}
 }
 
@@ -38,36 +36,38 @@ func (b *Bot) Run(wg *sync.WaitGroup) {
 		// channel to sync with the bot
 		serviceStoped := make(chan struct{})
 
-		// context to stop the bot
-		serviceDone, cancelFunc := context.WithCancel(b.done)
-
-		defer func() {
-			cancelFunc()
-			<-serviceStoped
-			wg.Done()
-		}()
-
 		for {
+			// context to stop the bot
+			serviceDone, cancelFunc := context.WithCancel(b.done)
 
 			select {
 			// Stop the app before running the bot
 			case <-b.done.Done():
+				cancelFunc()
+				wg.Done()
+				log.Println("app is stopped")
 				return
 
 			// Start the bot
 			case <-b.start:
+				log.Println("bot is running")
 				go b.service.Run(serviceDone, serviceStoped)
 			}
 
 			select {
 			// Stop the app and then the bot
 			case <-b.done.Done():
+				cancelFunc()
+				<-serviceStoped
+				wg.Done()
+				log.Println("app and bot are stopped")
 				return
 
 			// Stop the bot
 			case <-b.stop:
 				cancelFunc()
 				<-serviceStoped
+				log.Println("bot is stoped")
 
 			// Internal bot error
 			case <-serviceStoped:
@@ -81,7 +81,7 @@ func (b *Bot) Run(wg *sync.WaitGroup) {
 
 func (b *Bot) Start(w http.ResponseWriter, r *http.Request) {
 	if b.service.GetSymbol() == "" || b.service.GetPeriod() == "" {
-		w.Write([]byte("not enough parameters"))
+		//w.Write([]byte("not enough parameters"))
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}

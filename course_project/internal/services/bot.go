@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 
 	"github.com/tfs-go-hw/course_project/internal/domain"
@@ -15,10 +16,10 @@ type Bot struct {
 	kraken kraken.KrakenService
 }
 
-func NewBotService(r repository.Repository, public string, private string) BotService {
+func NewBotService(r repository.Repository, k kraken.KrakenService) BotService {
 	return &Bot{
 		repo:   r,
-		kraken: kraken.NewKraken(public, private),
+		kraken: k,
 	}
 }
 
@@ -28,6 +29,8 @@ type BotService interface {
 	GetSymbol() string
 	SetPeriod(domain.CandlePeriod)
 	GetPeriod() domain.CandlePeriod
+	WSConnect() error
+	WSDisconnect() error
 }
 
 func (b *Bot) SetSymbol(s string) {
@@ -46,30 +49,72 @@ func (b *Bot) GetPeriod() domain.CandlePeriod {
 	return b.kraken.GetPeriod()
 }
 
+func (b *Bot) WSConnect() error {
+	return b.kraken.WSConnect()
+}
+
+func (b *Bot) WSDisconnect() error {
+	return b.kraken.WSDisconnect()
+}
+
 func (b *Bot) Run(done context.Context, finished chan struct{}) {
 
-	err := b.kraken.Subscribe()
+	// Connecting to market
+	err := b.kraken.WSConnect()
 	if err != nil {
+		log.Println(err)
 		finished <- struct{}{}
 		return
 	}
+	log.Println("Connected to market")
+	/*
+		// Subscribing to candle flow
+		err = b.kraken.WSSubscribe()
+		if err != nil {
+			log.Println(err)
+			finished <- struct{}{}
+			return
+		}
+		log.Println("Subscribed to market")
+	*/
 	wg := &sync.WaitGroup{}
 	wg.Add(2)
 	stop, channelFunc := context.WithCancel(done)
 
-	c := make(chan domain.Candle)
+	candle := make(chan domain.Candle)
 
+	// Ping
 	go b.kraken.WriteHandler(wg, stop)
-	go b.kraken.ReadHandler(wg, stop, c)
+
+	// Reading candles from ws connect
+	go b.kraken.ReadHandler(wg, stop, candle)
+
 	for {
 		select {
 		case <-done.Done():
 			channelFunc()
-			b.kraken.CloseConnection()
 			wg.Wait()
+			/*
+				// Unsubscribing from candle flow
+				err = b.kraken.WSUnsubscribe()
+				if err != nil {
+					log.Println(err)
+				}
+				log.Println("Unsubscribed from market")
+			*/
+			// Disconnecting from market
+			err = b.kraken.WSDisconnect()
+			if err != nil {
+				log.Println(err)
+				finished <- struct{}{}
+				return
+			}
+			log.Println("Disconnected from market")
+
+			close(candle)
 			finished <- struct{}{}
 			return
-		case candle := <-c:
+		case candle := <-candle:
 			fmt.Println(candle)
 		}
 	}

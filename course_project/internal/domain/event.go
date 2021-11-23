@@ -11,7 +11,7 @@ func NewEvent(event string, period string, symbol string) Event {
 
 	ans := Event{
 		Event:      event,
-		Feed:       "candle_trade_" + period,
+		Feed:       "candles_trade_" + period,
 		ProductIds: make([]interface{}, 1),
 	}
 	ans.ProductIds[0] = symbol
