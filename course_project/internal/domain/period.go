@@ -44,3 +44,27 @@ func (p *Period) IsValid() bool {
 	}
 	return isValid
 }
+
+func GetPeriodInSec(p CandlePeriod) int64 {
+	switch p {
+	case CandlePeriod1m:
+		return 60
+	case CandlePeriod5m:
+		return 5 * 60
+	case CandlePeriod15m:
+		return 15 * 60
+	case CandlePeriod30m:
+		return 30 * 60
+	case CandlePeriod1h:
+		return 1 * 60 * 60
+	case CandlePeriod4h:
+		return 4 * 60 * 60
+	case CandlePeriod12h:
+		return 12 * 60 * 60
+	case CandlePeriod1d:
+		return 1 * 24 * 60 * 60
+	case CandlePeriod1w:
+		return 7 * 24 * 60 * 60
+	}
+	return 0
+}

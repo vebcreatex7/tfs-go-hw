@@ -23,3 +23,8 @@ type CandleSubscribe struct {
 	C         Candle `json:"candle,omitempty"`
 	ProductId string `json:"product_id"`
 }
+
+type OHLC struct {
+	Candles []Candle `json:"candles"`
+	Flag    bool     `json:"more_candles"`
+}

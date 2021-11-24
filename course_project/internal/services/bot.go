@@ -65,11 +65,26 @@ func (b *Bot) Run(ctx context.Context, finished chan struct{}) {
 		finished <- struct{}{}
 	}()
 
-	// Connecting to market
-	err := b.kraken.WSConnect()
+	// Init indicator
+	candles, err := b.kraken.GetOHLC(b.kraken.GetSymbol(), b.kraken.GetPeriod(), int64(b.macd.CandlesNeeded())+1)
 	if err != nil {
 		log.Println(err)
+		return
+	}
 
+	// Remove current price
+	candles = candles[:len(candles)-1]
+
+	err = b.macd.InitMacd(candles)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	// Connecting to market
+	err = b.kraken.WSConnect()
+	if err != nil {
+		log.Println(err)
 		return
 	}
 	log.Println("Connected to market")
@@ -107,52 +122,4 @@ func (b *Bot) Run(ctx context.Context, finished chan struct{}) {
 		}
 		return
 	}
-
-	/*
-		<-ctx.Done()
-		channelFunc()
-		wg.Wait()
-		//close(candle)
-		err = b.kraken.WSDisconnect()
-		if err != nil {
-			log.Println(err)
-			finished <- struct{}{}
-			return
-		}
-		log.Println("Disconnected from market")
-
-		finished <- struct{}{}
-	*/
-	/*
-		for {
-			select {
-			case <-done.Done():
-				channelFunc()
-				wg.Wait()
-
-					// Unsubscribing from candle flow
-					err = b.kraken.WSUnsubscribe()
-					if err != nil {
-						log.Println(err)
-					}
-					log.Println("Unsubscribed from market")
-
-				// Disconnecting from market
-				err = b.kraken.WSDisconnect()
-				if err != nil {
-					log.Println(err)
-					finished <- struct{}{}
-					return
-				}
-				log.Println("Disconnected from market")
-
-				close(candle)
-				finished <- struct{}{}
-				return
-			case candle := <-candle:
-				fmt.Println(candle)
-			}
-		}
-	*/
-
 }

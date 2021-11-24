@@ -6,8 +6,12 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"io"
 	"log"
+	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -27,7 +31,7 @@ const (
 	pingPeriod = (pongWait * 9) / 10
 )
 
-const urlWs = "wss://demo-futures.kraken.com/ws/v1?chart"
+const urlWs = "wss://futures.kraken.com/ws/v1?chart"
 
 var (
 	ErrBadConnect = errors.New("kraken: bad subscribe")
@@ -56,6 +60,7 @@ type KrakenService interface {
 	WSConnect() error
 	WSDisconnect() error
 	CandlesFlow(*errgroup.Group, context.Context) <-chan domain.Candle
+	GetOHLC(string, domain.CandlePeriod, int64) ([]domain.Candle, error)
 }
 
 func (k *Kraken) SetSymbol(s string) {
@@ -72,6 +77,35 @@ func (k *Kraken) SetPeriod(s domain.CandlePeriod) {
 
 func (k *Kraken) GetPeriod() domain.CandlePeriod {
 	return k.period
+}
+
+func (k *Kraken) GetOHLC(s string, p domain.CandlePeriod, n int64) ([]domain.Candle, error) {
+	t := n * domain.GetPeriodInSec(p)
+	from := time.Now().Unix() - t
+	url := "https://futures.kraken.com/api/charts/v1" + "/trade/" + s + "/" + string(p) + "?from=" + strconv.FormatInt(from, 10)
+
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	c := http.Client{}
+	resp, err := c.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	d := domain.OHLC{}
+	err = json.Unmarshal(data, &d)
+	if err != nil {
+		return nil, err
+	}
+	return d.Candles, nil
 }
 
 func (k *Kraken) WSConnect() error {
@@ -182,7 +216,7 @@ func (k *Kraken) CandlesFlow(eg *errgroup.Group, ctx context.Context) <-chan dom
 		}
 
 		candle.BuildCandle(tmp)
-		c <- *candle
+		//c <- *candle
 
 		// Candle flow
 		for {
