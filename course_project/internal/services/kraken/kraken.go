@@ -7,13 +7,12 @@ import (
 	"crypto/sha512"
 	"encoding/base64"
 	"errors"
-	"fmt"
 	"log"
-	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/tfs-go-hw/course_project/internal/domain"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -22,7 +21,7 @@ const (
 	subscibeWait = 30 * time.Second
 
 	// Time allowed to read the next pong message from the peer
-	pongWait = 60 * time.Second
+	pongWait = 30 * time.Second
 
 	// Send pings to peer with this period.
 	pingPeriod = (pongWait * 9) / 10
@@ -56,10 +55,7 @@ type KrakenService interface {
 	GetPeriod() domain.CandlePeriod
 	WSConnect() error
 	WSDisconnect() error
-	WSSubscribe() error
-	WSUnsubscribe() error
-	ReadHandler(*sync.WaitGroup, context.Context, chan domain.Candle)
-	WriteHandler(*sync.WaitGroup, context.Context)
+	CandlesFlow(*errgroup.Group, context.Context) <-chan domain.Candle
 }
 
 func (k *Kraken) SetSymbol(s string) {
@@ -89,6 +85,13 @@ func (k *Kraken) WSConnect() error {
 		default:
 			k.conn, _, err = websocket.DefaultDialer.Dial(urlWs, nil)
 			if err == nil {
+				err = k.conn.SetReadDeadline(time.Now().Add(pongWait))
+				if err != nil {
+					log.Panicln(err)
+					return err
+				}
+				k.conn.SetPongHandler(func(string) error { k.conn.SetReadDeadline(time.Now().Add(pongWait)); return nil })
+
 				return nil
 			}
 		}
@@ -101,144 +104,114 @@ func (k *Kraken) WSDisconnect() error {
 	if err != nil {
 		return err
 	}
+
 	return nil
 }
 
-func (k *Kraken) WSSubscribe() error {
+func (k *Kraken) CandlesFlow(eg *errgroup.Group, ctx context.Context) <-chan domain.Candle {
 
-	version := &domain.Event{}
-	err := k.conn.ReadJSON(version)
-	if err != nil {
-		return err
-	}
-	fmt.Println(version)
+	c := make(chan domain.Candle)
 
-	event := domain.NewEvent("subscribe", string(k.period), k.symbol)
-	err = k.conn.WriteJSON(event)
-	if err != nil {
-		return err
-	}
+	// Gorutine subscribes then pings
+	eg.Go(func() error {
+		ping := time.NewTicker(pingPeriod)
+		defer func() {
+			ping.Stop()
+		}()
 
-	err = k.conn.ReadJSON(&event)
-	if err != nil {
-		return err
-	}
-	fmt.Println(event)
-	return nil
-}
-
-func (k *Kraken) WSUnsubscribe() error {
-	event := domain.NewEvent("unsubscribe", string(k.period), k.symbol)
-	err := k.conn.WriteJSON(event)
-	if err != nil {
-		return err
-	}
-
-	err = k.conn.ReadJSON(&event)
-	if err != nil {
-		return err
-	}
-	fmt.Println(event)
-	return nil
-}
-
-func (k *Kraken) WriteHandler(wg *sync.WaitGroup, done context.Context) {
-	ping := time.NewTicker(pingPeriod)
-
-	defer func() {
-		ping.Stop()
-		wg.Done()
-	}()
-
-	event := domain.NewEvent("subscribe", string(k.period), k.symbol)
-	err := k.conn.WriteJSON(event)
-	if err != nil {
-		log.Println(err)
-		return
-	}
-
-	for {
-		select {
-		case <-ping.C:
-			if err := k.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-				log.Println(err)
-				return
-			}
-		case <-done.Done():
-			stop := event
-			stop.Event = "unsubscribe"
-			err = k.conn.WriteJSON(stop)
-			if err != nil {
-				log.Println(err)
-			}
-			return
+		// Subscribe
+		event := domain.NewEvent("subscribe", string(k.period), k.symbol)
+		err := k.conn.WriteJSON(event)
+		if err != nil {
+			//log.Println(err)
+			return err
 		}
-	}
-}
 
-func (k *Kraken) ReadHandler(wg *sync.WaitGroup, done context.Context, c chan domain.Candle) {
-	defer func() {
-		wg.Done()
-	}()
-
-	k.conn.SetReadDeadline(time.Now().Add(pongWait))
-	k.conn.SetPongHandler(func(string) error { k.conn.SetReadDeadline(time.Now().Add(pongWait)); return nil })
-
-	version := &domain.Event{}
-	err := k.conn.ReadJSON(version)
-	if err != nil {
-		log.Println(err)
-		return
-	}
-	//fmt.Println(version)
-
-	// Subscribe
-	var event domain.Event
-	err = k.conn.ReadJSON(&event)
-	if err != nil {
-		log.Println(err)
-		return
-	}
-	//fmt.Println(event)
-
-	// Candles
-	candle := &domain.Candle{}
-	tmp := domain.CandleSubscribe{}
-	err = k.conn.ReadJSON(&tmp)
-	if err != nil {
-		log.Println(err)
-		return
-	}
-
-	candle.BuildCandle(tmp)
-	//fmt.Println("candle", candle)
-	c <- *candle
-	for {
-		select {
-		case <-done.Done():
-			return
-		default:
-			err := k.conn.ReadJSON(&tmp)
-			if err != nil {
-				return
-			}
-			fmt.Println("tmp", tmp)
-			if tmp.C.Time == candle.Time {
-				candle.Close = tmp.C.Close
-				if tmp.C.Low < candle.Low {
-					candle.Low = tmp.C.Low
+		// Ping
+		for {
+			select {
+			case <-ping.C:
+				err = k.conn.WriteMessage(websocket.PingMessage, nil)
+				if err != nil {
+					//log.Println(err)
+					return err
 				}
-				if tmp.C.High > candle.High {
-					candle.High = tmp.C.High
+			case <-ctx.Done():
+				stop := event
+				stop.Event = "unsubscribe"
+				err = k.conn.WriteJSON(stop)
+				if err != nil {
+					//log.Panicln(err)
+					return err
 				}
-				candle.Volume += tmp.C.Volume
-			} else {
-				c <- *candle
-				candle.BuildCandle(tmp)
-
+				return nil
 			}
 		}
-	}
+
+	})
+
+	// Gorutine reads tnen sends candles over a chan
+	eg.Go(func() error {
+		defer func() {
+			close(c)
+		}()
+
+		// Read version
+		version := &domain.Event{}
+		err := k.conn.ReadJSON(version)
+		if err != nil {
+			//log.Panicln(err)
+			return err
+		}
+
+		// Subscribed
+		var event domain.Event
+		err = k.conn.ReadJSON(&event)
+		if err != nil {
+			//log.Println(err)
+			return err
+		}
+
+		// Candle snapshot
+		candle := &domain.Candle{}
+		tmp := domain.CandleSubscribe{}
+		err = k.conn.ReadJSON(&tmp)
+		if err != nil {
+			//log.Println(err)
+			return err
+		}
+
+		candle.BuildCandle(tmp)
+		c <- *candle
+
+		// Candle flow
+		for {
+			select {
+			case <-ctx.Done():
+				return nil
+			default:
+				err := k.conn.ReadJSON(&tmp)
+				if err != nil {
+					return err
+				}
+				if tmp.C.Time == candle.Time {
+					candle.Close = tmp.C.Close
+					if tmp.C.Low < candle.Low {
+						candle.Low = tmp.C.Low
+					}
+					if tmp.C.High > candle.High {
+						candle.High = tmp.C.High
+					}
+					candle.Volume += tmp.C.Volume
+				} else {
+					c <- *candle
+					candle.BuildCandle(tmp)
+				}
+			}
+		}
+
+	})
+	return c
 }
 
 func (k *Kraken) genAuth(postData string, endPoint string) (string, error) {

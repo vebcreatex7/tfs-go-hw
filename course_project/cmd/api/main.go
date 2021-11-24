@@ -15,6 +15,7 @@ import (
 	"github.com/tfs-go-hw/course_project/internal/domain"
 	"github.com/tfs-go-hw/course_project/internal/handlers"
 	"github.com/tfs-go-hw/course_project/internal/services"
+	"github.com/tfs-go-hw/course_project/internal/services/indicators"
 	"github.com/tfs-go-hw/course_project/internal/services/kraken"
 )
 
@@ -35,8 +36,8 @@ func main() {
 	r := chi.NewRouter()
 
 	kraken := kraken.NewKraken(viper.GetString("keys.public_key"), viper.GetString("keys.private_key"))
-
-	botService := services.NewBotService(nil, kraken)
+	macd := indicators.NewMacd()
+	botService := services.NewBotService(nil, kraken, macd)
 
 	botHandler := handlers.NewBot(done, botService)
 

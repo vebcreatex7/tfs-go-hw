@@ -81,7 +81,6 @@ func (b *Bot) Run(wg *sync.WaitGroup) {
 
 func (b *Bot) Start(w http.ResponseWriter, r *http.Request) {
 	if b.service.GetSymbol() == "" || b.service.GetPeriod() == "" {
-		//w.Write([]byte("not enough parameters"))
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
