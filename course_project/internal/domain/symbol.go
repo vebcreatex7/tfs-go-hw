@@ -1,5 +1,7 @@
 package domain
 
+import "strings"
+
 var AvailableSymbols [5]string = [5]string{
 	"pi_xbtusd",
 	"pi_ethusd",
@@ -15,7 +17,7 @@ type Symbol struct {
 func (s *Symbol) IsValid() bool {
 	isValid := false
 	for i := range AvailableSymbols {
-		if s.Symbol == AvailableSymbols[i] {
+		if strings.ToLower(s.Symbol) == AvailableSymbols[i] {
 			isValid = true
 			break
 		}

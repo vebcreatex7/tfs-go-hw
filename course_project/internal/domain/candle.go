@@ -19,12 +19,13 @@ func (candle *Candle) BuildCandle(tmp CandleSubscribe) {
 }
 
 type CandleSubscribe struct {
-	Feed      string `json:"feed"`
+	Feed      string `json:"feed,omitempty"`
 	C         Candle `json:"candle,omitempty"`
-	ProductId string `json:"product_id"`
+	ProductId string `json:"product_id,omitempty"`
 }
 
 type OHLC struct {
-	Candles []Candle `json:"candles"`
-	Flag    bool     `json:"more_candles"`
+	Candles []Candle `json:"candles,omitempty"`
+	Flag    bool     `json:"more_candles,omitempty"`
+	Error   string   `json:"error,omitempty"`
 }

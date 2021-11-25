@@ -54,14 +54,11 @@ func main() {
 	botHandler.Run(wg)
 
 	<-sigquit
-	fmt.Println("ctrl+C")
 	cancelFunc()
 	fmt.Println("Cancel")
 	wg.Wait()
 	if err := serv.Shutdown(context.Background()); err != nil {
 		log.Println("Can't shutdown main server: ", err.Error())
 	}
-
-	//r := chi.NewRouter()
 
 }

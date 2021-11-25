@@ -8,10 +8,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -31,48 +33,52 @@ const (
 	pingPeriod = (pongWait * 9) / 10
 )
 
-const urlWs = "wss://futures.kraken.com/ws/v1?chart"
-
 var (
 	ErrBadConnect = errors.New("kraken: bad subscribe")
 )
 
 type Kraken struct {
-	conn       *websocket.Conn
-	publicKey  string
-	privateKey string
-	symbol     string
-	period     domain.CandlePeriod
+	conn               *websocket.Conn
+	publicKey          string
+	privateKey         string
+	symbol             string
+	period             domain.CandlePeriod
+	amount             int
+	openPositionAmount int
 }
 
 func NewKraken(public string, private string) KrakenService {
 	return &Kraken{
 		publicKey:  public,
 		privateKey: private,
+		amount:     1,
 	}
 }
 
 type KrakenService interface {
-	SetSymbol(string)
+	SetSymbol(symbol string)
 	GetSymbol() string
-	SetPeriod(domain.CandlePeriod)
+	SetPeriod(period domain.CandlePeriod)
 	GetPeriod() domain.CandlePeriod
 	WSConnect() error
 	WSDisconnect() error
 	CandlesFlow(*errgroup.Group, context.Context) <-chan domain.Candle
-	GetOHLC(string, domain.CandlePeriod, int64) ([]domain.Candle, error)
+	GetOHLC(s string, p domain.CandlePeriod, n int64) ([]domain.Candle, error)
+	GetOpenPositions() error
+	Trade(eg *errgroup.Group, action <-chan domain.Action) <-chan domain.Order
+	//SendOrderMkt(side string) (domain.Order, error)
 }
 
-func (k *Kraken) SetSymbol(s string) {
-	k.symbol = s
+func (k *Kraken) SetSymbol(symbol string) {
+	k.symbol = symbol
 }
 
 func (k *Kraken) GetSymbol() string {
 	return k.symbol
 }
 
-func (k *Kraken) SetPeriod(s domain.CandlePeriod) {
-	k.period = s
+func (k *Kraken) SetPeriod(period domain.CandlePeriod) {
+	k.period = period
 }
 
 func (k *Kraken) GetPeriod() domain.CandlePeriod {
@@ -82,7 +88,7 @@ func (k *Kraken) GetPeriod() domain.CandlePeriod {
 func (k *Kraken) GetOHLC(s string, p domain.CandlePeriod, n int64) ([]domain.Candle, error) {
 	t := n * domain.GetPeriodInSec(p)
 	from := time.Now().Unix() - t
-	url := "https://futures.kraken.com/api/charts/v1" + "/trade/" + s + "/" + string(p) + "?from=" + strconv.FormatInt(from, 10)
+	url := "https://demo-futures.kraken.com/api/charts/v1" + "/trade/" + s + "/" + string(p) + "?from=" + strconv.FormatInt(from, 10)
 
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
@@ -105,10 +111,135 @@ func (k *Kraken) GetOHLC(s string, p domain.CandlePeriod, n int64) ([]domain.Can
 	if err != nil {
 		return nil, err
 	}
+
+	if d.Error != "" {
+		return nil, fmt.Errorf("GetOHLC error: %s", d.Error)
+	}
+
 	return d.Candles, nil
 }
 
+// Init open positions
+func (k *Kraken) GetOpenPositions() error {
+
+	authent, err := k.genAuth("", "/api/v3/openpositions")
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodGet, "https://demo-futures.kraken.com/derivatives/api/v3/openpositions", nil)
+	if err != nil {
+		return err
+	}
+
+	req.Header.Add("APIKey", k.publicKey)
+	req.Header.Add("Authent", authent)
+
+	c := http.Client{}
+
+	resp, err := c.Do(req)
+	if err != nil {
+		return err
+	}
+
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+
+	d := domain.OpenPositions{}
+	err = json.Unmarshal(data, &d)
+	if err != nil {
+		return err
+	}
+	if d.Error != "" {
+		return fmt.Errorf("GetOpenPositions error: %s", d.Error)
+	}
+	for i := range d.OpenPositions {
+		if strings.EqualFold(d.OpenPositions[i].Symbol, k.symbol) {
+			k.openPositionAmount = d.OpenPositions[i].Size
+			if d.OpenPositions[i].Side == "short" {
+				k.openPositionAmount *= -1
+			}
+			break
+		}
+	}
+	log.Println(k.openPositionAmount)
+	return nil
+
+}
+
+func (k *Kraken) Trade(eg *errgroup.Group, action <-chan domain.Action) <-chan domain.Order {
+	order := make(chan domain.Order)
+
+	eg.Go(func() error {
+		defer func() {
+			close(order)
+		}()
+		for a := range action {
+			fmt.Println(a)
+			if a == domain.Buy || a == domain.Sell {
+				o, err := k.SendOrderMkt(string(a))
+				if err != nil {
+					return err
+				}
+				order <- o
+			} else {
+				continue
+			}
+		}
+		return nil
+	})
+
+	return order
+}
+
+func (k *Kraken) SendOrderMkt(side string) (domain.Order, error) {
+	postData := "orderType=mkt" + "&symbol=" + k.symbol + "&side=" + side + "&size=" + fmt.Sprintf("%d", k.amount)
+	authent, err := k.genAuth(postData, "/api/v3/sendorder")
+	if err != nil {
+		return domain.Order{}, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, "https://demo-futures.kraken.com/derivatives/api/v3/sendorder"+"?"+postData, nil)
+	if err != nil {
+		return domain.Order{}, err
+	}
+
+	req.Header.Add("APIKey", k.publicKey)
+	req.Header.Add("Authent", authent)
+
+	c := http.Client{}
+
+	resp, err := c.Do(req)
+	if err != nil {
+		return domain.Order{}, err
+	}
+
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return domain.Order{}, err
+	}
+
+	d := domain.Order{}
+	err = json.Unmarshal(data, &d)
+	if err != nil {
+		return domain.Order{}, err
+	}
+
+	if d.Error != "" {
+		return domain.Order{}, fmt.Errorf("SendOrderMkt error: %s", d.Error)
+	}
+
+	return d, nil
+
+}
+
 func (k *Kraken) WSConnect() error {
+	urlWs := "wss://demo-futures.kraken.com/ws/v1?chart"
 	wait := time.NewTicker(subscibeWait)
 	var err error
 	for {
@@ -216,7 +347,6 @@ func (k *Kraken) CandlesFlow(eg *errgroup.Group, ctx context.Context) <-chan dom
 		}
 
 		candle.BuildCandle(tmp)
-		//c <- *candle
 
 		// Candle flow
 		for {
@@ -236,7 +366,6 @@ func (k *Kraken) CandlesFlow(eg *errgroup.Group, ctx context.Context) <-chan dom
 					if tmp.C.High > candle.High {
 						candle.High = tmp.C.High
 					}
-					candle.Volume += tmp.C.Volume
 				} else {
 					c <- *candle
 					candle.BuildCandle(tmp)

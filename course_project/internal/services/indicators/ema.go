@@ -7,37 +7,6 @@ import (
 	"github.com/tfs-go-hw/course_project/internal/domain"
 )
 
-/*
-func EMA(candle domain.Candle, prevEMA float64, n int, source rune) float64 {
-
-	var price float64 = 0.
-	var err error
-	switch source {
-	case 'O':
-		price, err = strconv.ParseFloat(candle.Open, 64)
-		if err != nil {
-			return 0.
-		}
-	case 'H':
-		price, err = strconv.ParseFloat(candle.High, 64)
-		if err != nil {
-			return 0.
-		}
-	case 'L':
-		price, err = strconv.ParseFloat(candle.Low, 64)
-		if err != nil {
-			return 0.
-		}
-	case 'C':
-		price, err = strconv.ParseFloat(candle.Close, 64)
-		if err != nil {
-			return 0.
-		}
-	}
-	return float64(2)/float64(n+1)*(price-prevEMA) + prevEMA
-}
-*/
-
 func EMA(candle domain.Candle, prevEMA domain.Candle, n int) domain.Candle {
 	var (
 		open  float64

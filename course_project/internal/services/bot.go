@@ -2,7 +2,10 @@ package services
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
+	"time"
 
 	"github.com/tfs-go-hw/course_project/internal/domain"
 	"github.com/tfs-go-hw/course_project/internal/repository"
@@ -10,6 +13,13 @@ import (
 	"github.com/tfs-go-hw/course_project/internal/services/kraken"
 	"golang.org/x/sync/errgroup"
 )
+
+var (
+	// Time allowed to get candle for initialization indicator
+	candleWait = 60 * time.Second
+)
+
+var ErrInitIndicator = errors.New("InitIndicatorError")
 
 type Bot struct {
 	repo   repository.Repository
@@ -59,23 +69,45 @@ func (b *Bot) WSDisconnect() error {
 	return b.kraken.WSDisconnect()
 }
 
+func (b *Bot) initIndicator() error {
+	wait := time.NewTicker(candleWait)
+	for {
+		select {
+		case <-wait.C:
+			return ErrInitIndicator
+		default:
+			candles, err := b.kraken.GetOHLC(b.kraken.GetSymbol(), b.kraken.GetPeriod(), int64(b.macd.CandlesNeeded())+1)
+			if err != nil {
+				continue
+			}
+			// Remove current price
+			candles = candles[:len(candles)-1]
+
+			// Init indicator
+			err = b.macd.InitMacd(candles)
+			if err == nil {
+				return err
+			}
+
+		}
+	}
+}
+
 func (b *Bot) Run(ctx context.Context, finished chan struct{}) {
 
 	defer func() {
 		finished <- struct{}{}
 	}()
 
-	// Init indicator
-	candles, err := b.kraken.GetOHLC(b.kraken.GetSymbol(), b.kraken.GetPeriod(), int64(b.macd.CandlesNeeded())+1)
+	// Get open positions to work with
+	err := b.kraken.GetOpenPositions()
 	if err != nil {
 		log.Println(err)
 		return
 	}
 
-	// Remove current price
-	candles = candles[:len(candles)-1]
-
-	err = b.macd.InitMacd(candles)
+	// Init indicator
+	err = b.initIndicator()
 	if err != nil {
 		log.Println(err)
 		return
@@ -91,10 +123,16 @@ func (b *Bot) Run(ctx context.Context, finished chan struct{}) {
 
 	eg, errDone := errgroup.WithContext(ctx)
 	done, channelFunc := context.WithCancel(ctx)
-
 	// Pipline
 	candle := b.kraken.CandlesFlow(eg, done)
-	b.macd.Serve(eg, candle)
+	action := b.macd.Serve(eg, candle)
+	order := b.kraken.Trade(eg, action)
+	eg.Go(func() error {
+		for o := range order {
+			fmt.Printf("%#v", o)
+		}
+		return nil
+	})
 
 	select {
 	case <-ctx.Done():
@@ -114,7 +152,7 @@ func (b *Bot) Run(ctx context.Context, finished chan struct{}) {
 		err = eg.Wait()
 		if err != nil {
 			log.Println(err)
-			log.Println("Pipeline stoped unsuccessfully")
+			log.Println("Pipeline stoped with error")
 		}
 		err = b.kraken.WSDisconnect()
 		if err != nil {
