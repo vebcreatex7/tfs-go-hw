@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"time"
 
+	"github.com/sirupsen/logrus"
 	"github.com/tfs-go-hw/course_project/internal/domain"
 	"github.com/tfs-go-hw/course_project/internal/repository"
 	"github.com/tfs-go-hw/course_project/internal/services/indicators"
@@ -25,11 +25,13 @@ type Bot struct {
 	repo   repository.Repository
 	kraken kraken.KrakenService
 	macd   indicators.MacdService
+	logger logrus.FieldLogger
 }
 
-func NewBotService(r repository.Repository, k kraken.KrakenService, m indicators.MacdService) BotService {
+func NewBotService(r repository.Repository, l logrus.FieldLogger, k kraken.KrakenService, m indicators.MacdService) BotService {
 	return &Bot{
 		repo:   r,
+		logger: l,
 		kraken: k,
 		macd:   m,
 	}
@@ -82,7 +84,6 @@ func (b *Bot) initIndicator() error {
 			}
 			// Remove current price
 			candles = candles[:len(candles)-1]
-
 			// Init indicator
 			err = b.macd.InitMacd(candles)
 			if err == nil {
@@ -102,27 +103,32 @@ func (b *Bot) Run(ctx context.Context, finished chan struct{}) {
 	// Get open positions to work with
 	err := b.kraken.GetOpenPositions()
 	if err != nil {
-		log.Println(err)
+		b.logger.Println(err)
+		//log.Println(err)
 		return
 	}
 
 	// Init indicator
 	err = b.initIndicator()
 	if err != nil {
-		log.Println(err)
+		b.logger.Println(err)
+		//log.Println(err)
 		return
 	}
 
 	// Connecting to market
 	err = b.kraken.WSConnect()
 	if err != nil {
-		log.Println(err)
+		b.logger.Println(err)
+		//log.Println(err)
 		return
 	}
-	log.Println("Connected to market")
+	b.logger.Println("Connected to market")
+	//log.Println("Connected to market")
 
 	eg, errDone := errgroup.WithContext(ctx)
 	done, channelFunc := context.WithCancel(ctx)
+
 	// Pipline
 	candle := b.kraken.CandlesFlow(eg, done)
 	action := b.macd.Serve(eg, candle)
@@ -138,25 +144,31 @@ func (b *Bot) Run(ctx context.Context, finished chan struct{}) {
 	case <-ctx.Done():
 		channelFunc()
 		if err = eg.Wait(); err == nil {
-			log.Println("Pipeline stoped successfully")
+			b.logger.Println("Pipeline stoped successfully")
+			//log.Println("Pipeline stoped successfully")
 		}
 		err = b.kraken.WSDisconnect()
 		if err != nil {
-			log.Println(err)
+			b.logger.Println(err)
+			//log.Println(err)
 			return
 		}
-		log.Println("Disconnected from market")
+		b.logger.Println("Disconnected from market")
+		//log.Println("Disconnected from market")
 		return
 	case <-errDone.Done():
 		channelFunc()
 		err = eg.Wait()
 		if err != nil {
-			log.Println(err)
-			log.Println("Pipeline stoped with error")
+			b.logger.Println(err)
+			//log.Println(err)
+			b.logger.Println("Pipeline stoped with error")
+			//log.Println("Pipeline stoped with error")
 		}
 		err = b.kraken.WSDisconnect()
 		if err != nil {
-			log.Println(err)
+			b.logger.Println(err)
+			//log.Println(err)
 		}
 		return
 	}

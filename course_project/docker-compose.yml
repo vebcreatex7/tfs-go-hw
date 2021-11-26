@@ -1,0 +1,14 @@
+postgres:
+  image: postgres
+  container_name: course_project
+  environment:
+    POSTGRES_USER: kirill
+    POSTGRES_PASSWORD: passwd
+    POSTGRES_DB: bot
+    PGDATA: /data/postgres
+  volumes:
+    - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    - ./postgres:/data/postgres
+  ports:
+    - "5442:5432"
+  restart: always

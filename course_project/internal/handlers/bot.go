@@ -4,28 +4,31 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"log"
 	"net/http"
 	"sync"
 
 	"github.com/go-chi/chi"
+	"github.com/sirupsen/logrus"
 	"github.com/tfs-go-hw/course_project/internal/domain"
 	"github.com/tfs-go-hw/course_project/internal/services"
 )
 
 type Bot struct {
-	start   chan struct{}
-	stop    chan struct{}
-	done    context.Context
-	service services.BotService
+	start     chan struct{}
+	stop      chan struct{}
+	done      context.Context
+	service   services.BotService
+	logger    logrus.FieldLogger
+	isRunning bool
 }
 
-func NewBot(d context.Context, s services.BotService) *Bot {
+func NewBot(d context.Context, s services.BotService, l logrus.FieldLogger) *Bot {
 	return &Bot{
 		start:   make(chan struct{}),
 		stop:    make(chan struct{}),
 		done:    d,
 		service: s,
+		logger:  l,
 	}
 }
 
@@ -44,13 +47,17 @@ func (b *Bot) Run(wg *sync.WaitGroup) {
 			// Stop the app before running the bot
 			case <-b.done.Done():
 				cancelFunc()
+				b.isRunning = false
 				wg.Done()
-				log.Println("app is stopped")
+				b.logger.Println("app is stopped")
+				//log.Println("app is stopped")
 				return
 
 			// Start the bot
 			case <-b.start:
-				log.Println("bot is running")
+				b.logger.Println("bot is running")
+				//log.Println("bot is running")
+				b.isRunning = true
 				go b.service.Run(serviceDone, serviceStoped)
 			}
 
@@ -59,19 +66,25 @@ func (b *Bot) Run(wg *sync.WaitGroup) {
 			case <-b.done.Done():
 				cancelFunc()
 				<-serviceStoped
+				b.isRunning = false
 				wg.Done()
-				log.Println("app and bot are stopped")
+				b.logger.Println("app and bot are stopped")
+				//log.Println("app and bot are stopped")
 				return
 
 			// Stop the bot
 			case <-b.stop:
 				cancelFunc()
 				<-serviceStoped
-				log.Println("bot is stoped")
+				b.isRunning = false
+				b.logger.Println("bot is stoped")
+				//log.Println("bot is stoped")
 
 			// Internal bot error
 			case <-serviceStoped:
-				log.Println("Internal bot error")
+				b.isRunning = false
+				b.logger.Println("Internal bot error")
+				//log.Println("Internal bot error")
 			}
 
 		}
@@ -80,19 +93,26 @@ func (b *Bot) Run(wg *sync.WaitGroup) {
 }
 
 func (b *Bot) Start(w http.ResponseWriter, r *http.Request) {
-	if b.service.GetSymbol() == "" || b.service.GetPeriod() == "" {
+	if b.service.GetSymbol() == "" || b.service.GetPeriod() == "" || b.isRunning {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-
 	b.start <- struct{}{}
 }
 
 func (b *Bot) Stop(w http.ResponseWriter, r *http.Request) {
+	if !b.isRunning {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
 	b.stop <- struct{}{}
 }
 
 func (b *Bot) SetSymbol(w http.ResponseWriter, r *http.Request) {
+	if b.isRunning {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
 	d, err := io.ReadAll(r.Body)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -117,6 +137,10 @@ func (b *Bot) SetSymbol(w http.ResponseWriter, r *http.Request) {
 }
 
 func (b *Bot) SetPeriod(w http.ResponseWriter, r *http.Request) {
+	if b.isRunning {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
 	d, err := io.ReadAll(r.Body)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
