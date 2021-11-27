@@ -16,6 +16,7 @@ import (
 	"github.com/tfs-go-hw/course_project/internal/domain"
 	"github.com/tfs-go-hw/course_project/internal/handlers"
 	"github.com/tfs-go-hw/course_project/internal/repository"
+	"github.com/tfs-go-hw/course_project/internal/repository/telegram"
 	"github.com/tfs-go-hw/course_project/internal/services"
 	"github.com/tfs-go-hw/course_project/internal/services/indicators"
 	"github.com/tfs-go-hw/course_project/internal/services/kraken"
@@ -26,14 +27,15 @@ import (
 func main() {
 
 	logger := logrus.New()
-	logger.SetLevel(logrus.PanicLevel)
+	logger.SetLevel(logrus.TraceLevel)
 
-	// Get private/public key, port, db auth data.
+	// Get private/public key, port, db, tg auth data.
 	err := config.Init()
 	if err != nil {
 		logger.Fatal(err)
 	}
 
+	// Conect to postgres
 	dsn := "postgres://" + viper.GetString("postgres.user") + ":" +
 		viper.GetString("postgres.password") + "@localhost:" +
 		viper.GetString("postgres.port") + "/" + viper.GetString("postgres.db")
@@ -44,7 +46,14 @@ func main() {
 	}
 	defer pool.Close()
 
-	repo := repository.NewRepository(pool)
+	// Connect to tgBot
+	tgbot, err := telegram.NewBot(viper.GetString("telegram.token"))
+	if err != nil {
+		logger.Fatal(err)
+	}
+
+	// Repository
+	repo := repository.NewRepository(pool, tgbot)
 
 	// Kraken services
 	kraken := kraken.NewKraken(viper.GetString("keys.public_key"), viper.GetString("keys.private_key"))
@@ -53,13 +62,12 @@ func main() {
 	// Bot services
 	botService := services.NewBotService(repo, logger, kraken, macd)
 
-	r := chi.NewRouter()
-	r.Use(pkglog.NewStructuredLogger(logger))
-
 	done, cancelFunc := context.WithCancel(context.Background())
 
 	// REST handler for control a bot
 	botHandler := handlers.NewBot(done, botService, logger)
+	r := chi.NewRouter()
+	r.Use(pkglog.NewStructuredLogger(logger))
 	r.Mount("/bot", botHandler.Routes())
 	serv := new(domain.Server)
 	go func() {

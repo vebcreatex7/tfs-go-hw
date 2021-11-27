@@ -65,8 +65,7 @@ type KrakenService interface {
 	CandlesFlow(*errgroup.Group, context.Context) <-chan domain.Candle
 	GetOHLC(s string, p domain.CandlePeriod, n int64) ([]domain.Candle, error)
 	GetOpenPositions() error
-	Trade(eg *errgroup.Group, action <-chan domain.Action) <-chan domain.Order
-	//SendOrderMkt(side string) (domain.Order, error)
+	Trade(eg *errgroup.Group, action <-chan domain.Action) <-chan domain.RecordOrder
 }
 
 func (k *Kraken) SetSymbol(symbol string) {
@@ -85,6 +84,7 @@ func (k *Kraken) GetPeriod() domain.CandlePeriod {
 	return k.period
 }
 
+// Returns n previous candles with symbol s and period p
 func (k *Kraken) GetOHLC(s string, p domain.CandlePeriod, n int64) ([]domain.Candle, error) {
 	t := n * domain.GetPeriodInSec(p)
 	from := time.Now().Unix() - t
@@ -119,7 +119,7 @@ func (k *Kraken) GetOHLC(s string, p domain.CandlePeriod, n int64) ([]domain.Can
 	return d.Candles, nil
 }
 
-// Init open positions
+// Inits open positions
 func (k *Kraken) GetOpenPositions() error {
 
 	authent, err := k.genAuth("", "/api/v3/openpositions")
@@ -165,26 +165,38 @@ func (k *Kraken) GetOpenPositions() error {
 			break
 		}
 	}
-	log.Println(k.openPositionAmount)
 	return nil
 
 }
 
-func (k *Kraken) Trade(eg *errgroup.Group, action <-chan domain.Action) <-chan domain.Order {
-	order := make(chan domain.Order)
+// Part of pipline, makes order in the exchange
+func (k *Kraken) Trade(eg *errgroup.Group, action <-chan domain.Action) <-chan domain.RecordOrder {
+	order := make(chan domain.RecordOrder)
 
 	eg.Go(func() error {
 		defer func() {
 			close(order)
 		}()
 		for a := range action {
-			fmt.Println(a)
+			//fmt.Println(a)
 			if a == domain.Buy || a == domain.Sell {
 				o, err := k.SendOrderMkt(string(a))
 				if err != nil {
 					return err
 				}
-				order <- o
+
+				if o.Error != "" {
+					return fmt.Errorf("errRecord: %s", o.Error)
+				}
+				if o.SendStatus.Status != "placed" {
+					return fmt.Errorf("errStatus: %s", o.SendStatus.Status)
+				}
+				record, err := domain.NewRecordOrder(&o)
+				if err != nil {
+					return err
+				}
+
+				order <- *record
 			} else {
 				continue
 			}
@@ -195,6 +207,7 @@ func (k *Kraken) Trade(eg *errgroup.Group, action <-chan domain.Action) <-chan d
 	return order
 }
 
+// Sends mkt order which is executed at the market price
 func (k *Kraken) SendOrderMkt(side string) (domain.Order, error) {
 	postData := "orderType=mkt" + "&symbol=" + k.symbol + "&side=" + side + "&size=" + fmt.Sprintf("%d", k.amount)
 	authent, err := k.genAuth(postData, "/api/v3/sendorder")
@@ -238,7 +251,9 @@ func (k *Kraken) SendOrderMkt(side string) (domain.Order, error) {
 
 }
 
+// Connect via websocket for the candles flow
 func (k *Kraken) WSConnect() error {
+	k.conn = nil
 	urlWs := "wss://demo-futures.kraken.com/ws/v1?chart"
 	wait := time.NewTicker(subscibeWait)
 	var err error
@@ -263,6 +278,7 @@ func (k *Kraken) WSConnect() error {
 	}
 }
 
+// Disconnects
 func (k *Kraken) WSDisconnect() error {
 	err := k.conn.Close()
 	k.conn = nil
@@ -273,6 +289,7 @@ func (k *Kraken) WSDisconnect() error {
 	return nil
 }
 
+// First part of pipline, returns candles channel
 func (k *Kraken) CandlesFlow(eg *errgroup.Group, ctx context.Context) <-chan domain.Candle {
 
 	c := make(chan domain.Candle)
@@ -288,7 +305,6 @@ func (k *Kraken) CandlesFlow(eg *errgroup.Group, ctx context.Context) <-chan dom
 		event := domain.NewEvent("subscribe", string(k.period), k.symbol)
 		err := k.conn.WriteJSON(event)
 		if err != nil {
-			//log.Println(err)
 			return err
 		}
 
@@ -298,7 +314,6 @@ func (k *Kraken) CandlesFlow(eg *errgroup.Group, ctx context.Context) <-chan dom
 			case <-ping.C:
 				err = k.conn.WriteMessage(websocket.PingMessage, nil)
 				if err != nil {
-					//log.Println(err)
 					return err
 				}
 			case <-ctx.Done():
@@ -306,7 +321,6 @@ func (k *Kraken) CandlesFlow(eg *errgroup.Group, ctx context.Context) <-chan dom
 				stop.Event = "unsubscribe"
 				err = k.conn.WriteJSON(stop)
 				if err != nil {
-					//log.Panicln(err)
 					return err
 				}
 				return nil
@@ -377,6 +391,7 @@ func (k *Kraken) CandlesFlow(eg *errgroup.Group, ctx context.Context) <-chan dom
 	return c
 }
 
+// Used for private REST API
 func (k *Kraken) genAuth(postData string, endPoint string) (string, error) {
 	sha := sha256.New()
 	concat := postData + endPoint

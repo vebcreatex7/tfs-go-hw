@@ -1,5 +1,7 @@
 package domain
 
+import "time"
+
 type Action string
 
 var (
@@ -39,4 +41,35 @@ type Order struct {
 	SendStatus sendStatus `json:"sendStatus,omitempty"`
 	ServerTime string     `json:"serverTime,omitempty"`
 	Error      string     `json:"error,omitempty"`
+}
+
+type RecordOrder struct {
+	TS     time.Time
+	Symbol string
+	Side   string
+	Size   int
+	Price  float64
+}
+
+func NewRecordOrder(o *Order) (*RecordOrder, error) {
+	layout := "2006-01-02T15:04:05.000Z"
+	str := o.SendStatus.ReceivedTime
+	t, err := time.Parse(layout, str)
+	if err != nil {
+		return nil, err
+	}
+	t = t.Add(3 * time.Hour)
+
+	symb := o.SendStatus.OrderEvents[0].OrderPriorExecution.Symbol
+	side := o.SendStatus.OrderEvents[0].OrderPriorExecution.Side
+	size := o.SendStatus.OrderEvents[0].Amount
+	price := o.SendStatus.OrderEvents[0].Price
+
+	return &RecordOrder{
+		TS:     t,
+		Symbol: symb,
+		Side:   side,
+		Size:   size,
+		Price:  price,
+	}, nil
 }

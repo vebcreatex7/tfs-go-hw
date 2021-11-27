@@ -3,7 +3,6 @@ package indicators
 import (
 	"errors"
 	"fmt"
-	"log"
 	"strconv"
 
 	"github.com/tfs-go-hw/course_project/internal/domain"
@@ -45,6 +44,7 @@ func NewMacd() MacdService {
 	}
 }
 
+// Inits Fast and Slow EMA then Signal
 func (m *Macd) InitMacd(candles []domain.Candle) error {
 	if len(candles) != m.slowLength+m.signalLength {
 		return ErrInitMACDNumber
@@ -64,8 +64,6 @@ func (m *Macd) InitMacd(candles []domain.Candle) error {
 	m.signalPrev = SMA(macdPrevs, m.signalLength)
 	m.macdPrev = m.macd
 
-	log.Println("init MACD", m.macdPrev)
-	log.Println("init signal", m.signalPrev)
 	return nil
 }
 
@@ -74,6 +72,7 @@ func (m *Macd) CandlesNeeded() int {
 	return m.slowLength + m.signalLength
 }
 
+// Predicts whether to sell or buy
 func (m *Macd) predict() domain.Action {
 	var (
 		macdPricePrev   float64
@@ -113,6 +112,7 @@ func (m *Macd) predict() domain.Action {
 	}
 }
 
+// Forms MACD and Signal lines
 func (m *Macd) Serve(eg *errgroup.Group, c <-chan domain.Candle) <-chan domain.Action {
 	action := make(chan domain.Action)
 	eg.Go(func() error {
@@ -120,15 +120,10 @@ func (m *Macd) Serve(eg *errgroup.Group, c <-chan domain.Candle) <-chan domain.A
 			close(action)
 		}()
 		for candle := range c {
-			fmt.Println(candle)
 			m.fast = EMA(candle, m.fastPrev, m.fastLength)
 			m.slow = EMA(candle, m.slowPrev, m.slowLength)
 			m.macd = FastSlowDelta(m.fast, m.slow)
 			m.signal = EMA(m.macd, m.signalPrev, m.signalLength)
-
-			// logic
-			fmt.Println("MACD", m.macd)
-			fmt.Println("signal", m.signal)
 
 			action <- m.predict()
 
@@ -143,6 +138,7 @@ func (m *Macd) Serve(eg *errgroup.Group, c <-chan domain.Candle) <-chan domain.A
 	return action
 }
 
+// Counts MACD
 func FastSlowDelta(fast domain.Candle, slow domain.Candle) domain.Candle {
 	var (
 		deltaOpen  float64

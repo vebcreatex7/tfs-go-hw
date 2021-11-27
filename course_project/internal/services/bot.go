@@ -3,9 +3,9 @@ package services
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/sirupsen/logrus"
 	"github.com/tfs-go-hw/course_project/internal/domain"
 	"github.com/tfs-go-hw/course_project/internal/repository"
@@ -94,6 +94,25 @@ func (b *Bot) initIndicator() error {
 	}
 }
 
+// Last part of pipline, records orders to the postgres DB and sends to the tgBot
+func (b *Bot) Record(eg *errgroup.Group, order <-chan domain.RecordOrder) {
+	eg.Go(func() error {
+		for o := range order {
+			err := b.repo.InsertOrder(context.TODO(), o)
+			if err != nil {
+				return err
+			}
+			err = b.repo.SendOrder(o)
+			if err != nil {
+				return err
+			}
+
+		}
+		return nil
+	})
+}
+
+// Starts the pipline
 func (b *Bot) Run(ctx context.Context, finished chan struct{}) {
 
 	defer func() {
@@ -104,7 +123,6 @@ func (b *Bot) Run(ctx context.Context, finished chan struct{}) {
 	err := b.kraken.GetOpenPositions()
 	if err != nil {
 		b.logger.Println(err)
-		//log.Println(err)
 		return
 	}
 
@@ -112,64 +130,57 @@ func (b *Bot) Run(ctx context.Context, finished chan struct{}) {
 	err = b.initIndicator()
 	if err != nil {
 		b.logger.Println(err)
-		//log.Println(err)
 		return
 	}
 
-	// Connecting to market
-	err = b.kraken.WSConnect()
-	if err != nil {
-		b.logger.Println(err)
-		//log.Println(err)
-		return
-	}
-	b.logger.Println("Connected to market")
-	//log.Println("Connected to market")
-
-	eg, errDone := errgroup.WithContext(ctx)
-	done, channelFunc := context.WithCancel(ctx)
-
-	// Pipline
-	candle := b.kraken.CandlesFlow(eg, done)
-	action := b.macd.Serve(eg, candle)
-	order := b.kraken.Trade(eg, action)
-	eg.Go(func() error {
-		for o := range order {
-			fmt.Printf("%#v", o)
-		}
-		return nil
-	})
-
-	select {
-	case <-ctx.Done():
-		channelFunc()
-		if err = eg.Wait(); err == nil {
-			b.logger.Println("Pipeline stoped successfully")
-			//log.Println("Pipeline stoped successfully")
-		}
-		err = b.kraken.WSDisconnect()
+	for {
+		// Connecting to the exchange
+		err = b.kraken.WSConnect()
 		if err != nil {
 			b.logger.Println(err)
-			//log.Println(err)
 			return
 		}
-		b.logger.Println("Disconnected from market")
-		//log.Println("Disconnected from market")
-		return
-	case <-errDone.Done():
-		channelFunc()
-		err = eg.Wait()
-		if err != nil {
-			b.logger.Println(err)
-			//log.Println(err)
-			b.logger.Println("Pipeline stoped with error")
-			//log.Println("Pipeline stoped with error")
+		b.logger.Println("Connected to the exchange")
+
+		eg, errDone := errgroup.WithContext(ctx)
+		done, channelFunc := context.WithCancel(ctx)
+
+		// Pipline
+		candle := b.kraken.CandlesFlow(eg, done)
+		action := b.macd.Serve(eg, candle)
+		order := b.kraken.Trade(eg, action)
+		b.Record(eg, order)
+
+		select {
+		case <-ctx.Done():
+			channelFunc()
+			if err = eg.Wait(); err == nil {
+				b.logger.Println("Pipeline stoped successfully")
+			}
+			err = b.kraken.WSDisconnect()
+			if err != nil {
+				b.logger.Println(err)
+				return
+			}
+			b.logger.Println("Disconnected from the exchange")
+			return
+		case <-errDone.Done():
+			channelFunc()
+			err = eg.Wait()
+			if websocket.IsCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				b.logger.Println(err)
+				b.logger.Println("Reconnecting...")
+				continue
+			} else {
+				b.logger.Println(err)
+				b.logger.Println("Pipeline stoped with error")
+				err = b.kraken.WSDisconnect()
+				if err != nil {
+					b.logger.Println(err)
+				}
+				return
+			}
 		}
-		err = b.kraken.WSDisconnect()
-		if err != nil {
-			b.logger.Println(err)
-			//log.Println(err)
-		}
-		return
 	}
+
 }

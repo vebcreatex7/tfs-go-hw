@@ -9,3 +9,6 @@ postgres:
   password: "passwd"
   port: 5442
   db: "bot"
+
+telegram:
+  token: "2108154874:AAGiZXilhxwbkCTnNBM48bt84V4uI3cidO4"
