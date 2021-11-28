@@ -55,10 +55,15 @@ func NewRecordOrder(o *Order) (*RecordOrder, error) {
 	layout := "2006-01-02T15:04:05.000Z"
 	str := o.SendStatus.ReceivedTime
 	t, err := time.Parse(layout, str)
+
 	if err != nil {
 		return nil, err
 	}
-	t = t.Add(3 * time.Hour)
+	loc, err := time.LoadLocation("Europe/Moscow")
+	if err != nil {
+		return nil, err
+	}
+	t = t.In(loc)
 
 	symb := o.SendStatus.OrderEvents[0].OrderPriorExecution.Symbol
 	side := o.SendStatus.OrderEvents[0].OrderPriorExecution.Side
