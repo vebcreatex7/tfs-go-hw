@@ -65,7 +65,7 @@ type KrakenService interface {
 	CandlesFlow(*errgroup.Group, context.Context) <-chan domain.Candle
 	GetOHLC(s string, p domain.CandlePeriod, n int64) ([]domain.Candle, error)
 	GetOpenPositions() error
-	Trade(eg *errgroup.Group, action <-chan domain.Action) <-chan domain.RecordOrder
+	SendOrderMkt(side string) (domain.Order, error)
 }
 
 func (k *Kraken) SetSymbol(symbol string) {
@@ -167,44 +167,6 @@ func (k *Kraken) GetOpenPositions() error {
 	}
 	return nil
 
-}
-
-// Part of pipline, makes order in the exchange
-func (k *Kraken) Trade(eg *errgroup.Group, action <-chan domain.Action) <-chan domain.RecordOrder {
-	order := make(chan domain.RecordOrder)
-
-	eg.Go(func() error {
-		defer func() {
-			close(order)
-		}()
-		for a := range action {
-			//fmt.Println(a)
-			if a == domain.Buy || a == domain.Sell {
-				o, err := k.SendOrderMkt(string(a))
-				if err != nil {
-					return err
-				}
-
-				if o.Error != "" {
-					return fmt.Errorf("errRecord: %s", o.Error)
-				}
-				if o.SendStatus.Status != "placed" {
-					return fmt.Errorf("errStatus: %s", o.SendStatus.Status)
-				}
-				record, err := domain.NewRecordOrder(&o)
-				if err != nil {
-					return err
-				}
-
-				order <- *record
-			} else {
-				continue
-			}
-		}
-		return nil
-	})
-
-	return order
 }
 
 // Sends mkt order which is executed at the market price
@@ -339,7 +301,6 @@ func (k *Kraken) CandlesFlow(eg *errgroup.Group, ctx context.Context) <-chan dom
 		version := &domain.Event{}
 		err := k.conn.ReadJSON(version)
 		if err != nil {
-			//log.Panicln(err)
 			return err
 		}
 
@@ -347,7 +308,6 @@ func (k *Kraken) CandlesFlow(eg *errgroup.Group, ctx context.Context) <-chan dom
 		var event domain.Event
 		err = k.conn.ReadJSON(&event)
 		if err != nil {
-			//log.Println(err)
 			return err
 		}
 
@@ -362,6 +322,10 @@ func (k *Kraken) CandlesFlow(eg *errgroup.Group, ctx context.Context) <-chan dom
 
 		candle.BuildCandle(tmp)
 
+		// There is a lot of problems for example the repeatedly sends unique candles.
+		// To fight with this, this variable has been introduced.
+		var gotVithZeroVolume bool = false
+
 		// Candle flow
 		for {
 			select {
@@ -372,7 +336,12 @@ func (k *Kraken) CandlesFlow(eg *errgroup.Group, ctx context.Context) <-chan dom
 				if err != nil {
 					return err
 				}
-				if tmp.C.Time == candle.Time {
+				if tmp.C.Time < candle.Time {
+					continue
+				} else if tmp.C.Time == candle.Time {
+					if gotVithZeroVolume && tmp.C.Volume == 0 {
+						continue
+					}
 					candle.Close = tmp.C.Close
 					if tmp.C.Low < candle.Low {
 						candle.Low = tmp.C.Low
@@ -380,9 +349,14 @@ func (k *Kraken) CandlesFlow(eg *errgroup.Group, ctx context.Context) <-chan dom
 					if tmp.C.High > candle.High {
 						candle.High = tmp.C.High
 					}
+					candle.Volume = tmp.C.Volume
+					if tmp.C.Volume == 0. {
+						gotVithZeroVolume = true
+					}
 				} else {
 					c <- *candle
 					candle.BuildCandle(tmp)
+					gotVithZeroVolume = false
 				}
 			}
 		}

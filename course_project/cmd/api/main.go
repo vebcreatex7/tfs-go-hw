@@ -16,12 +16,12 @@ import (
 	"github.com/tfs-go-hw/course_project/internal/domain"
 	"github.com/tfs-go-hw/course_project/internal/handlers"
 	"github.com/tfs-go-hw/course_project/internal/repository"
-	"github.com/tfs-go-hw/course_project/internal/repository/telegram"
 	"github.com/tfs-go-hw/course_project/internal/services"
 	"github.com/tfs-go-hw/course_project/internal/services/indicators"
 	"github.com/tfs-go-hw/course_project/internal/services/kraken"
 	pkglog "github.com/tfs-go-hw/course_project/pkg/log"
 	pkgpostgres "github.com/tfs-go-hw/course_project/pkg/postgres"
+	pkgtelegram "github.com/tfs-go-hw/course_project/pkg/telegram"
 )
 
 func main() {
@@ -47,20 +47,20 @@ func main() {
 	defer pool.Close()
 
 	// Connect to tgBot
-	tgbot, err := telegram.NewBot(viper.GetString("telegram.token"))
+	tgbot, err := pkgtelegram.NewBot(viper.GetString("telegram.token"))
 	if err != nil {
 		logger.Fatal(err)
 	}
 
 	// Repository
-	repo := repository.NewRepository(pool, tgbot)
+	repo := repository.NewRepository(pool)
 
 	// Kraken services
 	kraken := kraken.NewKraken(viper.GetString("keys.public_key"), viper.GetString("keys.private_key"))
 	// Indicator services
 	macd := indicators.NewMacd()
 	// Bot services
-	botService := services.NewBotService(repo, logger, kraken, macd)
+	botService := services.NewBotService(repo, tgbot, logger, kraken, macd)
 
 	done, cancelFunc := context.WithCancel(context.Background())
 

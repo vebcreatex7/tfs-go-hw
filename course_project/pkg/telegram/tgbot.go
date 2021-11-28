@@ -12,7 +12,7 @@ type TgBot struct {
 	chatId int64
 }
 
-func NewBot(token string) (*TgBot, error) {
+func NewBot(token string) (TgSender, error) {
 
 	tg := &TgBot{}
 
@@ -25,11 +25,12 @@ func NewBot(token string) (*TgBot, error) {
 	u.Timeout = 60
 	updates := bot.GetUpdatesChan(u)
 	for update := range updates {
-		if update.Message == nil { // ignore any non-Message updates
+		// Ignore any non-Message updates
+		if update.Message == nil {
 			continue
 		}
-
-		if !update.Message.IsCommand() { // ignore any non-command Messages
+		// Ignore any non-command Messages.
+		if !update.Message.IsCommand() {
 			continue
 		}
 		if update.Message.Command() == "start" {
@@ -44,6 +45,7 @@ func NewBot(token string) (*TgBot, error) {
 func (tb *TgBot) SendOrder(order domain.RecordOrder) error {
 	str := order.TS.String() + "\n" +
 		order.Symbol + "\n" +
+		order.Side + "\n" +
 		fmt.Sprintf("%d", order.Size) + "\n" +
 		fmt.Sprintf("%f", order.Price)
 	msg := tgbotapi.NewMessage(tb.chatId, str)
@@ -52,4 +54,8 @@ func (tb *TgBot) SendOrder(order domain.RecordOrder) error {
 		return err
 	}
 	return nil
+}
+
+type TgSender interface {
+	SendOrder(order domain.RecordOrder) error
 }

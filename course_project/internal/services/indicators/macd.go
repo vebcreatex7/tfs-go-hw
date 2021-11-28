@@ -6,7 +6,6 @@ import (
 	"strconv"
 
 	"github.com/tfs-go-hw/course_project/internal/domain"
-	"golang.org/x/sync/errgroup"
 )
 
 var (
@@ -30,9 +29,9 @@ type Macd struct {
 }
 
 type MacdService interface {
-	Serve(eg *errgroup.Group, c <-chan domain.Candle) <-chan domain.Action
 	InitMacd(candles []domain.Candle) error
 	CandlesNeeded() int
+	Indicate(candle domain.Candle) domain.Action
 }
 
 func NewMacd() MacdService {
@@ -112,30 +111,19 @@ func (m *Macd) predict() domain.Action {
 	}
 }
 
-// Forms MACD and Signal lines
-func (m *Macd) Serve(eg *errgroup.Group, c <-chan domain.Candle) <-chan domain.Action {
-	action := make(chan domain.Action)
-	eg.Go(func() error {
-		defer func() {
-			close(action)
-		}()
-		for candle := range c {
-			m.fast = EMA(candle, m.fastPrev, m.fastLength)
-			m.slow = EMA(candle, m.slowPrev, m.slowLength)
-			m.macd = FastSlowDelta(m.fast, m.slow)
-			m.signal = EMA(m.macd, m.signalPrev, m.signalLength)
+func (m *Macd) Indicate(candle domain.Candle) domain.Action {
+	m.fast = EMA(candle, m.fastPrev, m.fastLength)
+	m.slow = EMA(candle, m.slowPrev, m.slowLength)
+	m.macd = FastSlowDelta(m.fast, m.slow)
+	m.signal = EMA(m.macd, m.signalPrev, m.signalLength)
 
-			action <- m.predict()
+	predict := m.predict()
+	m.fastPrev = m.fast
+	m.slowPrev = m.slow
+	m.macdPrev = m.macd
+	m.signalPrev = m.signal
+	return predict
 
-			m.fastPrev = m.fast
-			m.slowPrev = m.slow
-			m.macdPrev = m.macd
-			m.signalPrev = m.signal
-
-		}
-		return nil
-	})
-	return action
 }
 
 // Counts MACD

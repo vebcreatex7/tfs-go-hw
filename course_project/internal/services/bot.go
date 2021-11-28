@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -11,6 +12,7 @@ import (
 	"github.com/tfs-go-hw/course_project/internal/repository"
 	"github.com/tfs-go-hw/course_project/internal/services/indicators"
 	"github.com/tfs-go-hw/course_project/internal/services/kraken"
+	pkgtelegram "github.com/tfs-go-hw/course_project/pkg/telegram"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -23,14 +25,16 @@ var ErrInitIndicator = errors.New("InitIndicatorError")
 
 type Bot struct {
 	repo   repository.Repository
+	tgBot  pkgtelegram.TgSender
 	kraken kraken.KrakenService
 	macd   indicators.MacdService
 	logger logrus.FieldLogger
 }
 
-func NewBotService(r repository.Repository, l logrus.FieldLogger, k kraken.KrakenService, m indicators.MacdService) BotService {
+func NewBotService(r repository.Repository, t pkgtelegram.TgSender, l logrus.FieldLogger, k kraken.KrakenService, m indicators.MacdService) BotService {
 	return &Bot{
 		repo:   r,
+		tgBot:  t,
 		logger: l,
 		kraken: k,
 		macd:   m,
@@ -94,7 +98,58 @@ func (b *Bot) initIndicator() error {
 	}
 }
 
-// Last part of pipline, records orders to the postgres DB and sends to the tgBot
+// Part of the pipline. Uses indicator to make decision
+func (b *Bot) Indicator(eg *errgroup.Group, candle <-chan domain.Candle) <-chan domain.Action {
+	action := make(chan domain.Action)
+
+	eg.Go(func() error {
+		defer func() {
+			close(action)
+		}()
+		for c := range candle {
+			action <- b.macd.Indicate(c)
+		}
+		return nil
+	})
+	return action
+}
+
+// Part of the pipline. Makes orders on the exchange.
+func (b *Bot) Trading(eg *errgroup.Group, action <-chan domain.Action) <-chan domain.RecordOrder {
+	order := make(chan domain.RecordOrder)
+
+	eg.Go(func() error {
+		defer func() {
+			close(order)
+		}()
+		for a := range action {
+			if a == domain.Buy || a == domain.Sell {
+				o, err := b.kraken.SendOrderMkt(string(a))
+				if err != nil {
+					return err
+				}
+
+				if o.Error != "" {
+					return fmt.Errorf("errRecord: %s", o.Error)
+				}
+				if o.SendStatus.Status != "placed" {
+					return fmt.Errorf("errStatus: %s", o.SendStatus.Status)
+				}
+				record, err := domain.NewRecordOrder(&o)
+				if err != nil {
+					return err
+				}
+
+				order <- *record
+			}
+		}
+		return nil
+	})
+
+	return order
+}
+
+// Last part of pipline. Records orders to the postgres DB and sends to the tgBot.
 func (b *Bot) Record(eg *errgroup.Group, order <-chan domain.RecordOrder) {
 	eg.Go(func() error {
 		for o := range order {
@@ -102,7 +157,7 @@ func (b *Bot) Record(eg *errgroup.Group, order <-chan domain.RecordOrder) {
 			if err != nil {
 				return err
 			}
-			err = b.repo.SendOrder(o)
+			err = b.tgBot.SendOrder(o)
 			if err != nil {
 				return err
 			}
@@ -147,8 +202,8 @@ func (b *Bot) Run(ctx context.Context, finished chan struct{}) {
 
 		// Pipline
 		candle := b.kraken.CandlesFlow(eg, done)
-		action := b.macd.Serve(eg, candle)
-		order := b.kraken.Trade(eg, action)
+		action := b.Indicator(eg, candle)
+		order := b.Trading(eg, action)
 		b.Record(eg, order)
 
 		select {
