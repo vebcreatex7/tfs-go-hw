@@ -47,7 +47,7 @@ type Kraken struct {
 	openPositionAmount int
 }
 
-func NewKraken(public string, private string) KrakenService {
+func NewKraken(public string, private string) *Kraken {
 	return &Kraken{
 		publicKey:  public,
 		privateKey: private,
@@ -55,6 +55,7 @@ func NewKraken(public string, private string) KrakenService {
 	}
 }
 
+/*
 type KrakenService interface {
 	SetSymbol(symbol string)
 	GetSymbol() string
@@ -67,7 +68,7 @@ type KrakenService interface {
 	GetOpenPositions() error
 	SendOrderMkt(side string) (domain.Order, error)
 }
-
+*/
 func (k *Kraken) SetSymbol(symbol string) {
 	k.symbol = symbol
 }

@@ -17,11 +17,11 @@ import (
 	"github.com/tfs-go-hw/course_project/internal/handlers"
 	"github.com/tfs-go-hw/course_project/internal/repository"
 	"github.com/tfs-go-hw/course_project/internal/services"
-	"github.com/tfs-go-hw/course_project/internal/services/indicators"
-	"github.com/tfs-go-hw/course_project/internal/services/kraken"
+	"github.com/tfs-go-hw/course_project/pkg/indicators"
+	"github.com/tfs-go-hw/course_project/pkg/kraken"
 	pkglog "github.com/tfs-go-hw/course_project/pkg/log"
-	pkgpostgres "github.com/tfs-go-hw/course_project/pkg/postgres"
-	pkgtelegram "github.com/tfs-go-hw/course_project/pkg/telegram"
+	"github.com/tfs-go-hw/course_project/pkg/postgres"
+	"github.com/tfs-go-hw/course_project/pkg/telegram"
 )
 
 func main() {
@@ -35,19 +35,19 @@ func main() {
 		logger.Fatal(err)
 	}
 
-	// Conect to postgres
+	// Connect to the postgres
 	dsn := "postgres://" + viper.GetString("postgres.user") + ":" +
 		viper.GetString("postgres.password") + "@localhost:" +
 		viper.GetString("postgres.port") + "/" + viper.GetString("postgres.db")
 
-	pool, err := pkgpostgres.NewPool(dsn, logger)
+	pool, err := postgres.NewPool(dsn, logger)
 	if err != nil {
 		logger.Fatal(err)
 	}
 	defer pool.Close()
 
-	// Connect to tgBot
-	tgbot, err := pkgtelegram.NewBot(viper.GetString("telegram.token"))
+	// Connect to the tgBot
+	tgbot, err := telegram.NewBot(viper.GetString("telegram.token"))
 	if err != nil {
 		logger.Fatal(err)
 	}
@@ -55,10 +55,11 @@ func main() {
 	// Repository
 	repo := repository.NewRepository(pool)
 
-	// Kraken services
+	// Kraken API
 	kraken := kraken.NewKraken(viper.GetString("keys.public_key"), viper.GetString("keys.private_key"))
-	// Indicator services
+	// Indicator
 	macd := indicators.NewMacd()
+
 	// Bot services
 	botService := services.NewBotService(repo, tgbot, logger, kraken, macd)
 

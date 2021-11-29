@@ -9,10 +9,6 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/sirupsen/logrus"
 	"github.com/tfs-go-hw/course_project/internal/domain"
-	"github.com/tfs-go-hw/course_project/internal/repository"
-	"github.com/tfs-go-hw/course_project/internal/services/indicators"
-	"github.com/tfs-go-hw/course_project/internal/services/kraken"
-	pkgtelegram "github.com/tfs-go-hw/course_project/pkg/telegram"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -23,56 +19,72 @@ var (
 
 var ErrInitIndicator = errors.New("InitIndicatorError")
 
-type Bot struct {
-	repo   repository.Repository
-	tgBot  pkgtelegram.TgSender
-	kraken kraken.KrakenService
-	macd   indicators.MacdService
-	logger logrus.FieldLogger
-}
-
-func NewBotService(r repository.Repository, t pkgtelegram.TgSender, l logrus.FieldLogger, k kraken.KrakenService, m indicators.MacdService) BotService {
-	return &Bot{
-		repo:   r,
-		tgBot:  t,
-		logger: l,
-		kraken: k,
-		macd:   m,
-	}
-}
-
-type BotService interface {
-	Run(context.Context, chan struct{})
-	SetSymbol(string)
+type Exchange interface {
+	SetSymbol(symbol string)
 	GetSymbol() string
-	SetPeriod(domain.CandlePeriod)
+	SetPeriod(period domain.CandlePeriod)
 	GetPeriod() domain.CandlePeriod
 	WSConnect() error
 	WSDisconnect() error
+	CandlesFlow(*errgroup.Group, context.Context) <-chan domain.Candle
+	GetOHLC(s string, p domain.CandlePeriod, n int64) ([]domain.Candle, error)
+	GetOpenPositions() error
+	SendOrderMkt(side string) (domain.Order, error)
+}
+
+type Indicator interface {
+	Init(candles []domain.Candle) error
+	CandlesNeeded() int
+	Indicate(candle domain.Candle) domain.Action
+}
+
+type Repository interface {
+	InsertOrder(ctx context.Context, order domain.RecordOrder) error //postgres
+}
+type TgSender interface {
+	SendOrder(order domain.RecordOrder) error
+}
+
+type Bot struct {
+	repo      Repository
+	tgBot     TgSender
+	exchange  Exchange
+	indicator Indicator
+	logger    logrus.FieldLogger
+}
+
+func NewBotService(r Repository, t TgSender, l logrus.FieldLogger, k Exchange, m Indicator) *Bot {
+	return &Bot{
+		repo:      r,
+		tgBot:     t,
+		logger:    l,
+		exchange:  k,
+		indicator: m,
+	}
 }
 
 func (b *Bot) SetSymbol(s string) {
-	b.kraken.SetSymbol(s)
+	b.exchange.SetSymbol(s)
 }
 
 func (b *Bot) GetSymbol() string {
-	return b.kraken.GetSymbol()
+	return b.exchange.GetSymbol()
 }
 
 func (b *Bot) SetPeriod(s domain.CandlePeriod) {
-	b.kraken.SetPeriod(s)
+	b.exchange.SetPeriod(s)
 }
 
 func (b *Bot) GetPeriod() domain.CandlePeriod {
-	return b.kraken.GetPeriod()
+	return b.exchange.GetPeriod()
 }
 
 func (b *Bot) WSConnect() error {
-	return b.kraken.WSConnect()
+	return b.exchange.WSConnect()
 }
 
 func (b *Bot) WSDisconnect() error {
-	return b.kraken.WSDisconnect()
+	return b.exchange.WSDisconnect()
 }
 
 func (b *Bot) initIndicator() error {
@@ -82,14 +94,14 @@ func (b *Bot) initIndicator() error {
 		case <-wait.C:
 			return ErrInitIndicator
 		default:
-			candles, err := b.kraken.GetOHLC(b.kraken.GetSymbol(), b.kraken.GetPeriod(), int64(b.macd.CandlesNeeded())+1)
+			candles, err := b.exchange.GetOHLC(b.exchange.GetSymbol(), b.exchange.GetPeriod(), int64(b.indicator.CandlesNeeded())+1)
 			if err != nil {
 				continue
 			}
 			// Remove current price
 			candles = candles[:len(candles)-1]
 			// Init indicator
-			err = b.macd.InitMacd(candles)
+			err = b.indicator.Init(candles)
 			if err == nil {
 				return err
 			}
@@ -107,7 +119,7 @@ func (b *Bot) Indicator(eg *errgroup.Group, candle <-chan domain.Candle) <-chan 
 			close(action)
 		}()
 		for c := range candle {
-			action <- b.macd.Indicate(c)
+			action <- b.indicator.Indicate(c)
 		}
 		return nil
 	})
@@ -124,7 +136,7 @@ func (b *Bot) Trading(eg *errgroup.Group, action <-chan domain.Action) <-chan do
 		}()
 		for a := range action {
 			if a == domain.Buy || a == domain.Sell {
-				o, err := b.kraken.SendOrderMkt(string(a))
+				o, err := b.exchange.SendOrderMkt(string(a))
 				if err != nil {
 					return err
 				}
@@ -153,7 +165,7 @@ func (b *Bot) Trading(eg *errgroup.Group, action <-chan domain.Action) <-chan do
 func (b *Bot) Record(eg *errgroup.Group, order <-chan domain.RecordOrder) {
 	eg.Go(func() error {
 		for o := range order {
-			err := b.repo.InsertOrder(context.TODO(), o)
+			err := b.repo.InsertOrder(context.Background(), o)
 			if err != nil {
 				return err
 			}
@@ -175,7 +187,7 @@ func (b *Bot) Run(ctx context.Context, finished chan struct{}) {
 	}()
 
 	// Get open positions to work with
-	err := b.kraken.GetOpenPositions()
+	err := b.exchange.GetOpenPositions()
 	if err != nil {
 		b.logger.Println(err)
 		return
@@ -190,7 +202,7 @@ func (b *Bot) Run(ctx context.Context, finished chan struct{}) {
 
 	for {
 		// Connecting to the exchange
-		err = b.kraken.WSConnect()
+		err = b.exchange.WSConnect()
 		if err != nil {
 			b.logger.Println(err)
 			return
@@ -201,7 +213,7 @@ func (b *Bot) Run(ctx context.Context, finished chan struct{}) {
 		done, channelFunc := context.WithCancel(ctx)
 
 		// Pipline
-		candle := b.kraken.CandlesFlow(eg, done)
+		candle := b.exchange.CandlesFlow(eg, done)
 		action := b.Indicator(eg, candle)
 		order := b.Trading(eg, action)
 		b.Record(eg, order)
@@ -212,7 +224,7 @@ func (b *Bot) Run(ctx context.Context, finished chan struct{}) {
 			if err = eg.Wait(); err == nil {
 				b.logger.Println("Pipeline stoped successfully")
 			}
-			err = b.kraken.WSDisconnect()
+			err = b.exchange.WSDisconnect()
 			if err != nil {
 				b.logger.Println(err)
 				return
@@ -229,7 +241,7 @@ func (b *Bot) Run(ctx context.Context, finished chan struct{}) {
 			} else {
 				b.logger.Println(err)
 				b.logger.Println("Pipeline stoped with error")
-				err = b.kraken.WSDisconnect()
+				err = b.exchange.WSDisconnect()
 				if err != nil {
 					b.logger.Println(err)
 				}

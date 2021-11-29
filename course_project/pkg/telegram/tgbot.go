@@ -12,7 +12,7 @@ type TgBot struct {
 	chatId int64
 }
 
-func NewBot(token string) (TgSender, error) {
+func NewBot(token string) (*TgBot, error) {
 
 	tg := &TgBot{}
 
@@ -54,8 +54,4 @@ func (tb *TgBot) SendOrder(order domain.RecordOrder) error {
 		return err
 	}
 	return nil
-}
-
-type TgSender interface {
-	SendOrder(order domain.RecordOrder) error
 }

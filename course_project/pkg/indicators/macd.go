@@ -28,13 +28,7 @@ type Macd struct {
 
 }
 
-type MacdService interface {
-	InitMacd(candles []domain.Candle) error
-	CandlesNeeded() int
-	Indicate(candle domain.Candle) domain.Action
-}
-
-func NewMacd() MacdService {
+func NewMacd() *Macd {
 	return &Macd{
 		fastLength:   12,
 		slowLength:   26,
@@ -44,7 +38,7 @@ func NewMacd() MacdService {
 }
 
 // Inits Fast and Slow EMA then Signal
-func (m *Macd) InitMacd(candles []domain.Candle) error {
+func (m *Macd) Init(candles []domain.Candle) error {
 	if len(candles) != m.slowLength+m.signalLength {
 		return ErrInitMACDNumber
 	}

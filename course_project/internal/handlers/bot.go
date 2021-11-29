@@ -10,19 +10,26 @@ import (
 	"github.com/go-chi/chi"
 	"github.com/sirupsen/logrus"
 	"github.com/tfs-go-hw/course_project/internal/domain"
-	"github.com/tfs-go-hw/course_project/internal/services"
 )
+
+type BotService interface {
+	Run(context.Context, chan struct{})
+	SetSymbol(string)
+	GetSymbol() string
+	SetPeriod(domain.CandlePeriod)
+	GetPeriod() domain.CandlePeriod
+}
 
 type Bot struct {
 	start     chan struct{}
 	stop      chan struct{}
 	done      context.Context
-	service   services.BotService
+	service   BotService
 	logger    logrus.FieldLogger
 	isRunning bool
 }
 
-func NewBot(d context.Context, s services.BotService, l logrus.FieldLogger) *Bot {
+func NewBot(d context.Context, s BotService, l logrus.FieldLogger) *Bot {
 	return &Bot{
 		start:   make(chan struct{}),
 		stop:    make(chan struct{}),
@@ -50,13 +57,11 @@ func (b *Bot) Run(wg *sync.WaitGroup) {
 				b.isRunning = false
 				wg.Done()
 				b.logger.Println("app is stopped")
-				//log.Println("app is stopped")
 				return
 
 			// Start the bot
 			case <-b.start:
 				b.logger.Println("bot is running")
-				//log.Println("bot is running")
 				b.isRunning = true
 				go b.service.Run(serviceDone, serviceStoped)
 			}
@@ -69,7 +74,6 @@ func (b *Bot) Run(wg *sync.WaitGroup) {
 				b.isRunning = false
 				wg.Done()
 				b.logger.Println("app and bot are stopped")
-				//log.Println("app and bot are stopped")
 				return
 
 			// Stop the bot
@@ -78,13 +82,11 @@ func (b *Bot) Run(wg *sync.WaitGroup) {
 				<-serviceStoped
 				b.isRunning = false
 				b.logger.Println("bot is stoped")
-				//log.Println("bot is stoped")
 
 			// Internal bot error
 			case <-serviceStoped:
 				b.isRunning = false
 				b.logger.Println("Internal bot error")
-				//log.Println("Internal bot error")
 			}
 
 		}
