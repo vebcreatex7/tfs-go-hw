@@ -25,6 +25,26 @@ Signal = EMA_a(EMA_s(P) - EMA_i(P))
 
 Как известно, для инициализации EMA_n необходимо простое скользящее среднее SMA_n за этот период.  А значит для инициализации индикатора MACD необходимо a + i свечей, где a - больший период линии MACD, i - период сигнальной линии.
 
+## Образец конфига
+config.yml
+```yml
+port: 8000
+
+keys:
+  public_key: "JcXsb1FieaTu45EVat+e9QeV+gGcTpsfQUsqcbtI7GF51U2qhxsoJfxZ"
+  private_key: "Xwqw6FImWc7ZLfW5/5q7gfo4xO4o4qEETXTq1cLWcjiHwAqMzhc7QV6wPt9ydIut5SWxeY+Nsx5CVmH6ixNzqVAr"
+
+postgres:
+  user: "user"
+  password: "user"
+  port: 5442
+  db: "user"
+
+telegram:
+  token: "2108154874:AAGiZXilhxwbkCznNBMb8bt84V4rI3cidO4"
+```
+
+
 ## REST API
 
 ### Start   
