@@ -10,7 +10,7 @@ var (
 	Sell Action = "sell"
 )
 
-type orderPriorExecution struct {
+type OrderPriorExecution struct {
 	OrderId    string  `json:"orderId,omitempty"`
 	Type       string  `json:"type,omitempty"`
 	Symbol     string  `json:"symbol,omitempty"`
@@ -20,25 +20,25 @@ type orderPriorExecution struct {
 	Timestamp  string  `json:"timestamp,omitempty"`
 }
 
-type orderEvent struct {
+type OrderEvent struct {
 	ExecutionId         string              `json:"executionId,omitempty"`
 	Price               float64             `json:"price,omitempty"`
 	Amount              int                 `json:"amount,omitempty"`
-	OrderPriorExecution orderPriorExecution `json:"orderPriorExecution,omitempty"`
+	OrderPriorExecution OrderPriorExecution `json:"orderPriorExecution,omitempty"`
 	Type                string              `json:"type,omitempty"`
 }
 
-type sendStatus struct {
+type SendStatus struct {
 	OrderId      string       `json:"order_id,omitempty"`
 	СliOrdId     string       `json:"cliOrdId,omitempty"`
 	Status       string       `json:"status,omitempty"`
 	ReceivedTime string       `json:"receivedTime,omitempty"`
-	OrderEvents  []orderEvent `json:"orderEvents,omitempty"`
+	OrderEvents  []OrderEvent `json:"orderEvents,omitempty"`
 }
 
 type Order struct {
 	Result     string     `json:"result,omitempty"`
-	SendStatus sendStatus `json:"sendStatus,omitempty"`
+	SendStatus SendStatus `json:"sendStatus,omitempty"`
 	ServerTime string     `json:"serverTime,omitempty"`
 	Error      string     `json:"error,omitempty"`
 }

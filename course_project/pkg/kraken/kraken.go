@@ -55,20 +55,6 @@ func NewKraken(public string, private string) *Kraken {
 	}
 }
 
-/*
-type KrakenService interface {
-	SetSymbol(symbol string)
-	GetSymbol() string
-	SetPeriod(period domain.CandlePeriod)
-	GetPeriod() domain.CandlePeriod
-	WSConnect() error
-	WSDisconnect() error
-	CandlesFlow(*errgroup.Group, context.Context) <-chan domain.Candle
-	GetOHLC(s string, p domain.CandlePeriod, n int64) ([]domain.Candle, error)
-	GetOpenPositions() error
-	SendOrderMkt(side string) (domain.Order, error)
-}
-*/
 func (k *Kraken) SetSymbol(symbol string) {
 	k.symbol = symbol
 }
@@ -83,6 +69,10 @@ func (k *Kraken) SetPeriod(period domain.CandlePeriod) {
 
 func (k *Kraken) GetPeriod() domain.CandlePeriod {
 	return k.period
+}
+
+func (k *Kraken) SetAmount(amount int) {
+	k.amount = amount
 }
 
 // Returns n previous candles with symbol s and period p

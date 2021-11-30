@@ -3,6 +3,7 @@ package indicators
 import (
 	"errors"
 	"fmt"
+	"log"
 	"strconv"
 
 	"github.com/tfs-go-hw/course_project/internal/domain"
@@ -35,6 +36,18 @@ func NewMacd() *Macd {
 		signalLength: 9,
 		source:       'C',
 	}
+}
+
+func (m *Macd) Config(fast, slow, signal int, s rune) {
+	m.fastLength = fast
+	m.slowLength = slow
+	m.signalLength = signal
+	m.source = s
+	log.Println(m.fastLength, m.slowLength, m.signalLength)
+}
+
+func (m *Macd) ChangeSource(s rune) {
+	m.source = s
 }
 
 // Inits Fast and Slow EMA then Signal
@@ -112,6 +125,8 @@ func (m *Macd) Indicate(candle domain.Candle) domain.Action {
 	m.signal = EMA(m.macd, m.signalPrev, m.signalLength)
 
 	predict := m.predict()
+	log.Println(predict)
+	log.Println(m.source)
 	m.fastPrev = m.fast
 	m.slowPrev = m.slow
 	m.macdPrev = m.macd

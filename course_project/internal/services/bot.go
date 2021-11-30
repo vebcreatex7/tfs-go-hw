@@ -24,6 +24,7 @@ type Exchange interface {
 	GetSymbol() string
 	SetPeriod(period domain.CandlePeriod)
 	GetPeriod() domain.CandlePeriod
+	SetAmount(amount int)
 	WSConnect() error
 	WSDisconnect() error
 	CandlesFlow(*errgroup.Group, context.Context) <-chan domain.Candle
@@ -36,10 +37,12 @@ type Indicator interface {
 	Init(candles []domain.Candle) error
 	CandlesNeeded() int
 	Indicate(candle domain.Candle) domain.Action
+	Config(fast, slow, signal int, s rune)
+	ChangeSource(s rune)
 }
 
 type Repository interface {
-	InsertOrder(ctx context.Context, order domain.RecordOrder) error //postgres
+	InsertOrder(ctx context.Context, order domain.RecordOrder) error
 }
 type TgSender interface {
 	SendOrder(order domain.RecordOrder) error
@@ -79,6 +82,18 @@ func (b *Bot) GetPeriod() domain.CandlePeriod {
 	return b.exchange.GetPeriod()
 }
 
+func (b *Bot) SetAmount(amount int) {
+	b.exchange.SetAmount(amount)
+}
+
+func (b *Bot) ConfigurateIndicator(fast, slow, signal int, s rune) {
+	b.indicator.Config(fast, slow, signal, s)
+}
+
+func (b *Bot) ChangeSourceIndicator(s rune) {
+	b.indicator.ChangeSource(s)
+}
+
 func (b *Bot) WSConnect() error {
 	return b.exchange.WSConnect()
 }
@@ -110,7 +125,7 @@ func (b *Bot) initIndicator() error {
 	}
 }
 
-// Part of the pipline. Uses indicator to make decision
+// Part of the pipeline. Uses indicator to make decision
 func (b *Bot) Indicator(eg *errgroup.Group, candle <-chan domain.Candle) <-chan domain.Action {
 	action := make(chan domain.Action)
 
@@ -126,7 +141,7 @@ func (b *Bot) Indicator(eg *errgroup.Group, candle <-chan domain.Candle) <-chan 
 	return action
 }
 
-// Part of the pipline. Makes orders on the exchange.
+// Part of the pipeline. Makes orders on the exchange.
 func (b *Bot) Trading(eg *errgroup.Group, action <-chan domain.Action) <-chan domain.RecordOrder {
 	order := make(chan domain.RecordOrder)
 
@@ -161,7 +176,7 @@ func (b *Bot) Trading(eg *errgroup.Group, action <-chan domain.Action) <-chan do
 	return order
 }
 
-// Last part of pipline. Records orders to the postgres DB and sends to the tgBot.
+// Last part of pipeline. Records orders to the postgres DB and sends to the tgBot.
 func (b *Bot) Record(eg *errgroup.Group, order <-chan domain.RecordOrder) {
 	eg.Go(func() error {
 		for o := range order {
@@ -179,11 +194,11 @@ func (b *Bot) Record(eg *errgroup.Group, order <-chan domain.RecordOrder) {
 	})
 }
 
-// Starts the pipline
-func (b *Bot) Run(ctx context.Context, finished chan struct{}) {
+// Starts the pipeline
+func (b *Bot) Run(stop <-chan struct{}, stoped chan<- struct{}) {
 
 	defer func() {
-		finished <- struct{}{}
+		stoped <- struct{}{}
 	}()
 
 	// Get open positions to work with
@@ -209,8 +224,8 @@ func (b *Bot) Run(ctx context.Context, finished chan struct{}) {
 		}
 		b.logger.Println("Connected to the exchange")
 
-		eg, errDone := errgroup.WithContext(ctx)
-		done, channelFunc := context.WithCancel(ctx)
+		done, channelFunc := context.WithCancel(context.Background())
+		eg, errDone := errgroup.WithContext(done)
 
 		// Pipline
 		candle := b.exchange.CandlesFlow(eg, done)
@@ -219,7 +234,8 @@ func (b *Bot) Run(ctx context.Context, finished chan struct{}) {
 		b.Record(eg, order)
 
 		select {
-		case <-ctx.Done():
+		case <-stop:
+			logrus.Println("service received cancel")
 			channelFunc()
 			if err = eg.Wait(); err == nil {
 				b.logger.Println("Pipeline stoped successfully")

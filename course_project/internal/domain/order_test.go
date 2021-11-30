@@ -8,21 +8,21 @@ import (
 )
 
 func TestNewRecordOrder_Testify(t *testing.T) {
-	ope := orderPriorExecution{
+	ope := OrderPriorExecution{
 		Symbol: "pi_xbtusd",
 		Side:   "buy",
 	}
 
-	oe := orderEvent{
+	oe := OrderEvent{
 		Price:               5555.5,
 		Amount:              1,
 		OrderPriorExecution: ope,
 	}
 
-	oes := make([]orderEvent, 1)
+	oes := make([]OrderEvent, 1)
 	oes[0] = oe
 
-	ss := sendStatus{
+	ss := SendStatus{
 		ReceivedTime: "2021-11-28T11:45:26.371Z",
 		OrderEvents:  oes,
 	}
