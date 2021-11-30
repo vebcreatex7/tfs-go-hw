@@ -47,7 +47,7 @@ Signal = EMA_a(EMA_s(P) - EMA_i(P))
 
 
 #### Error Response   
-**Condition**: Параметры биржи или индикатора заданы неправильно.  
+**Condition**: Не все параметры заданы.  
 **Code**: `400 Bad Request`   
 **Body**: `Not all necessary parameters are set`  
 
