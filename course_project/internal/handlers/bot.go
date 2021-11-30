@@ -95,8 +95,14 @@ func (b *Bot) Run(wg *sync.WaitGroup) {
 }
 
 func (b *Bot) Start(w http.ResponseWriter, r *http.Request) {
+	if b.isRunning {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("The bot has already been started"))
+		return
+	}
 	if b.service.GetSymbol() == "" || b.service.GetPeriod() == "" || b.isRunning {
 		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("Not all necessary parameters are set"))
 		return
 	}
 	_, _ = w.Write([]byte("Ok"))
@@ -106,10 +112,46 @@ func (b *Bot) Start(w http.ResponseWriter, r *http.Request) {
 func (b *Bot) Stop(w http.ResponseWriter, r *http.Request) {
 	if !b.isRunning {
 		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("The bot has not been started yet"))
 		return
 	}
 	_, _ = w.Write([]byte("Ok"))
 	b.stop <- struct{}{}
+}
+
+func (b *Bot) ConfigurateExchange(w http.ResponseWriter, r *http.Request) {
+	if b.isRunning {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("It isn't possible to change this params during the work"))
+		return
+	}
+	d, err := io.ReadAll(r.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("Invalid Body"))
+		return
+	}
+	defer r.Body.Close()
+
+	buf := domain.Exchange{}
+
+	err = json.Unmarshal(d, &buf)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("Invalid Body"))
+		return
+	}
+	if !buf.IsValid() {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("Invalid Body"))
+		return
+	}
+
+	b.service.SetSymbol(buf.Symbol.Symbol)
+	b.service.SetPeriod(buf.Period.Period)
+	b.service.SetAmount(buf.Amount.Amount)
+	_, _ = w.Write([]byte("Ok"))
+
 }
 
 func (b *Bot) ConfigurateIndicator(w http.ResponseWriter, r *http.Request) {
@@ -167,41 +209,6 @@ func (b *Bot) ChangeSourceIndicator(w http.ResponseWriter, r *http.Request) {
 	}
 	sourceRune := []rune(buf.Source)[0]
 	b.service.ChangeSourceIndicator(sourceRune)
-	_, _ = w.Write([]byte("Ok"))
-
-}
-
-func (b *Bot) ConfigurateExchange(w http.ResponseWriter, r *http.Request) {
-	if b.isRunning {
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte("It isn't possible to change this params during the work"))
-		return
-	}
-	d, err := io.ReadAll(r.Body)
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte("Invalid Body"))
-		return
-	}
-	defer r.Body.Close()
-
-	buf := domain.Exchange{}
-
-	err = json.Unmarshal(d, &buf)
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte("Invalid Body"))
-		return
-	}
-	if !buf.IsValid() {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte("Invalid Body"))
-		return
-	}
-
-	b.service.SetSymbol(buf.Symbol.Symbol)
-	b.service.SetPeriod(buf.Period.Period)
-	b.service.SetAmount(buf.Amount.Amount)
 	_, _ = w.Write([]byte("Ok"))
 
 }
