@@ -13,7 +13,7 @@ import (
 )
 
 type BotService interface {
-	Run(<-chan struct{}, chan<- struct{})
+	Run(stop <-chan struct{}, stoped chan<- struct{})
 	SetSymbol(string)
 	GetSymbol() string
 	SetPeriod(domain.CandlePeriod)
@@ -99,6 +99,7 @@ func (b *Bot) Start(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+	_, _ = w.Write([]byte("Ok"))
 	b.start <- struct{}{}
 }
 
@@ -107,6 +108,7 @@ func (b *Bot) Stop(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+	_, _ = w.Write([]byte("Ok"))
 	b.stop <- struct{}{}
 }
 
@@ -200,6 +202,7 @@ func (b *Bot) ConfigurateExchange(w http.ResponseWriter, r *http.Request) {
 	b.service.SetSymbol(buf.Symbol.Symbol)
 	b.service.SetPeriod(buf.Period.Period)
 	b.service.SetAmount(buf.Amount.Amount)
+	_, _ = w.Write([]byte("Ok"))
 
 }
 

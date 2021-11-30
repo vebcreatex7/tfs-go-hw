@@ -207,6 +207,7 @@ func (b *Bot) Run(stop <-chan struct{}, stoped chan<- struct{}) {
 		b.logger.Println(err)
 		return
 	}
+	b.logger.Println("Open positions are initialized")
 
 	// Init indicator
 	err = b.initIndicator()
@@ -214,6 +215,7 @@ func (b *Bot) Run(stop <-chan struct{}, stoped chan<- struct{}) {
 		b.logger.Println(err)
 		return
 	}
+	b.logger.Println("Indicator is initialized")
 
 	for {
 		// Connecting to the exchange

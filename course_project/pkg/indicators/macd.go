@@ -125,8 +125,8 @@ func (m *Macd) Indicate(candle domain.Candle) domain.Action {
 	m.signal = EMA(m.macd, m.signalPrev, m.signalLength)
 
 	predict := m.predict()
-	log.Println(predict)
-	log.Println(m.source)
+	//log.Println(predict)
+	//log.Println(m.source)
 	m.fastPrev = m.fast
 	m.slowPrev = m.slow
 	m.macdPrev = m.macd
